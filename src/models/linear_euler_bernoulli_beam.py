@@ -4,7 +4,10 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 from typing import Union
+from scipy.sparse.linalg import inv
+from scipy.linalg import eig
 import pathlib
+import warnings
 
 
 class BoundaryConditionType(Enum):
@@ -31,7 +34,7 @@ class LinearEulerBernoulliBeam:
         M (sparse.csr_matrix): Global mass matrix in sparse format
     """
 
-    def __init__(self, filename: Union[str, pathlib.Path]):
+    def __init__(self, filename: Union[str, pathlib.Path], damping_ratio: float):
         """
         Initialize beam with parameters from CSV file.
 
@@ -42,13 +45,24 @@ class LinearEulerBernoulliBeam:
             FileNotFoundError: If file doesn't exist
             ValueError: If file format is invalid
         """
+
+        if not 0 <= damping_ratio <= 1:
+            raise ValueError("Damping ratio must be between 0 and 1")
+
         self.parameters = None
         self.K = None
         self.M = None
+        self.C = None
+        self.damping_ratio = damping_ratio
         self.read_parameter_file(filename)
         self._boundary_conditions: Dict[int, BoundaryConditionType] = {}
         self._boundary_conditions_applied = False
         self._constrained_dofs: Set[int] = set()  # Track constrained DOFs
+
+        # Create matrices
+        self.create_stiffness_matrix()
+        self.create_mass_matrix()
+        self.create_damping_matrix()
 
     def read_parameter_file(self, filename: Union[str, pathlib.Path]) -> None:
         """
@@ -85,6 +99,7 @@ class LinearEulerBernoulliBeam:
             # Reset matrices since parameters changed
             self.K = None
             self.M = None
+            self.C = None
 
         except FileNotFoundError:
             raise FileNotFoundError(f"Parameter file {filename} not found")
@@ -143,6 +158,45 @@ class LinearEulerBernoulliBeam:
             (data, (rows, cols)), shape=(matrix_size, matrix_size)
         )
 
+    def create_damping_matrix(self) -> None:
+        """
+        Create global damping matrix C using modal damping approach.
+
+        Creates sparse matrix based on beam parameters and stores internally.
+        Uses the relationship C = 2MXξΩX^(-1) where:
+        - ξ is the damping ratio times identity matrix
+        - M is the mass matrix
+        - X contains eigenvectors of M^(-1)K
+        - Ω is natural frequencies times identity matrix
+
+        Raises:
+            RuntimeError: If K or M matrices haven't been created
+            ValueError: If eigenvalue computation fails or produces invalid results
+        """
+
+        if self.K is None or self.M is None:
+            raise RuntimeError(
+                "Matrices must be created before applying boundary conditions"
+            )
+
+        MInv = inv(self.M)
+        try:
+            eigenvalues, eigenvectors = eig(MInv.dot(self.K).toarray())
+        except np.linalg.LinAlgError:
+            raise ValueError("Failed to compute eigenvalues")
+
+        # Create diagonal matrices
+        n_states = self.M.shape[0]
+        omega = sparse.diags(np.sqrt(eigenvalues))
+        dampting_matrix = sparse.eye(n_states) * self.damping_ratio
+
+        # Convert eigenvectors to sparse
+        X = sparse.csr_matrix(eigenvectors)
+        X_inv = sparse.csr_matrix(np.linalg.inv(eigenvectors))
+
+        # Compute damping matrix maintaining sparsity
+        self.C = 2 * self.M.dot(X.dot(dampting_matrix.dot(omega.dot(X_inv))))
+
     def get_stiffness_matrix(self) -> np.ndarray:
         """
         Return global stiffness matrix as dense matrix.
@@ -170,6 +224,20 @@ class LinearEulerBernoulliBeam:
         if self.M is None:
             raise RuntimeError("Mass matrix not yet created")
         return self.M.toarray()
+
+    def get_mass_damping(self) -> np.ndarray:
+        """
+        Return global damping matrix as dense matrix.
+
+        Returns:
+            np.ndarray: Global damping matrix
+
+        Raises:
+            RuntimeError: If matrix hasn't been created
+        """
+        if self.C is None:
+            raise RuntimeError("Damping matrix not yet created")
+        return self.C.toarray()
 
     def get_length(self) -> float:
         """
@@ -261,6 +329,10 @@ class LinearEulerBernoulliBeam:
             raise RuntimeError(
                 "Matrices must be created before applying boundary conditions"
             )
+        if self.C is None:
+            warnings.warn(
+                "Warning: Matrix C is None. Proceeding without it.", RuntimeWarning
+            )
 
         # Validate all node indices first
         n_nodes = len(self.parameters) + 1
@@ -293,6 +365,8 @@ class LinearEulerBernoulliBeam:
         # Create reduced matrices using sparse operations
         self.K = self.K[dofs_to_keep, :][:, dofs_to_keep]
         self.M = self.M[dofs_to_keep, :][:, dofs_to_keep]
+        if self.C is not None:
+            self.C = self.C[dofs_to_keep, :][:, dofs_to_keep]
 
         self._constrained_dofs = dofs_to_constrain
         self._boundary_conditions_applied = True
@@ -312,6 +386,7 @@ class LinearEulerBernoulliBeam:
         # Recreate original matrices
         self.create_stiffness_matrix()
         self.create_mass_matrix()
+        self.create_damping_matrix()
 
         # Clear stored boundary conditions
         self._boundary_conditions.clear()
