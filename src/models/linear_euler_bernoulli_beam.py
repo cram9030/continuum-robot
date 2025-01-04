@@ -1,8 +1,17 @@
+from enum import Enum
+from typing import Dict, Set
 import numpy as np
 import pandas as pd
 from scipy import sparse
 from typing import Union
 import pathlib
+
+
+class BoundaryConditionType(Enum):
+    """Enumeration of supported boundary condition types."""
+
+    FIXED = "fixed"  # Both displacement and rotation fixed
+    PINNED = "pinned"  # Displacement fixed, rotation free
 
 
 class LinearEulerBernoulliBeam:
@@ -37,6 +46,9 @@ class LinearEulerBernoulliBeam:
         self.K = None
         self.M = None
         self.read_parameter_file(filename)
+        self._boundary_conditions: Dict[int, BoundaryConditionType] = {}
+        self._boundary_conditions_applied = False
+        self._constrained_dofs: Set[int] = set()  # Track constrained DOFs
 
     def read_parameter_file(self, filename: Union[str, pathlib.Path]) -> None:
         """
@@ -231,3 +243,104 @@ class LinearEulerBernoulliBeam:
                 [13 * L, -3 * L**2, 22 * L, 4 * L**2],
             ]
         ) * (rhoA * L / 420)
+
+    def apply_boundary_conditions(
+        self, conditions: Dict[int, BoundaryConditionType]
+    ) -> None:
+        """
+        Apply multiple boundary conditions.
+
+        Args:
+            conditions: Dictionary mapping node indices to boundary condition types
+
+        Raises:
+            ValueError: If any node index is invalid
+            RuntimeError: If matrices haven't been created yet
+        """
+        if self.K is None or self.M is None:
+            raise RuntimeError(
+                "Matrices must be created before applying boundary conditions"
+            )
+
+        # Validate all node indices first
+        n_nodes = len(self.parameters) + 1
+        for node_idx in conditions:
+            if node_idx < 0 or node_idx >= n_nodes:
+                raise ValueError(f"Node index {node_idx} out of range [0, {n_nodes-1}]")
+
+        # Track DOFs to be constrained
+        dofs_to_constrain = set()
+
+        # Process all boundary conditions
+        for node_idx, bc_type in conditions.items():
+            if bc_type == BoundaryConditionType.FIXED:
+                dofs_to_constrain.add(2 * node_idx)  # Displacement
+                dofs_to_constrain.add(2 * node_idx + 1)  # Rotation
+            elif bc_type == BoundaryConditionType.PINNED:
+                dofs_to_constrain.add(2 * node_idx)  # Only displacement
+            else:
+                raise ValueError(f"Unsupported boundary condition type: {bc_type}")
+
+            self._boundary_conditions[node_idx] = bc_type
+
+        # Get list of DOFs to keep
+        all_dofs = set(range(self.K.shape[0]))
+        dofs_to_keep = sorted(list(all_dofs - dofs_to_constrain))
+
+        if not dofs_to_keep:  # All DOFs constrained
+            raise ValueError("Cannot constrain all degrees of freedom")
+
+        # Create reduced matrices using sparse operations
+        self.K = self.K[dofs_to_keep, :][:, dofs_to_keep]
+        self.M = self.M[dofs_to_keep, :][:, dofs_to_keep]
+
+        self._constrained_dofs = dofs_to_constrain
+        self._boundary_conditions_applied = True
+
+    def clear_boundary_conditions(self) -> None:
+        """
+        Clear all boundary conditions and recreate original matrices.
+
+        Raises:
+            RuntimeError: If original matrices haven't been created
+        """
+        if self.K is None or self.M is None:
+            raise RuntimeError(
+                "Matrices must be created before clearing boundary conditions"
+            )
+
+        # Recreate original matrices
+        self.create_stiffness_matrix()
+        self.create_mass_matrix()
+
+        # Clear stored boundary conditions
+        self._boundary_conditions.clear()
+        self._constrained_dofs.clear()
+        self._boundary_conditions_applied = False
+
+    def get_boundary_conditions(self) -> Dict[int, BoundaryConditionType]:
+        """
+        Get currently applied boundary conditions.
+
+        Returns:
+            Dictionary mapping node indices to their boundary conditions
+        """
+        return self._boundary_conditions.copy()
+
+    def get_constrained_dofs(self) -> Set[int]:
+        """
+        Get indices of constrained degrees of freedom.
+
+        Returns:
+            Set of constrained DOF indices
+        """
+        return self._constrained_dofs.copy()
+
+    def has_boundary_conditions(self) -> bool:
+        """
+        Check if boundary conditions have been applied.
+
+        Returns:
+            True if boundary conditions have been applied, False otherwise
+        """
+        return self._boundary_conditions_applied

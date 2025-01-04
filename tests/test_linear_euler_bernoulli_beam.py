@@ -3,7 +3,7 @@ import numpy as np
 import tempfile
 import os
 
-from linear_euler_bernoulli_beam import LinearEulerBernoulliBeam
+from linear_euler_bernoulli_beam import LinearEulerBernoulliBeam, BoundaryConditionType
 
 
 @pytest.fixture
@@ -23,7 +23,7 @@ def nitinol_file():
 
         # Split 1m beam into 4 sections
         for _ in range(4):
-            f.write(f"0.25,75e9,4.91e-10,6450,7.85e-5\n")
+            f.write("0.25,75e9,4.91e-10,6450,7.85e-5\n")
 
     yield f.name
     # Cleanup temp file
@@ -165,3 +165,116 @@ def test_matrix_values(nitinol_file: str):
     K_reduced = K[2:, 2:]
     eigenvals = np.linalg.eigvals(K_reduced)
     assert np.all(eigenvals >= 0)
+
+
+@pytest.fixture
+def beam_fixture(nitinol_file):
+    """Create a beam with matrices initialized."""
+    beam = LinearEulerBernoulliBeam(nitinol_file)
+    beam.create_stiffness_matrix()
+    beam.create_mass_matrix()
+    return beam
+
+
+def test_multiple_boundary_conditions(beam_fixture):
+    """Test applying multiple boundary conditions simultaneously."""
+    beam = beam_fixture
+
+    # Store original matrix sizes
+    orig_size = beam.get_stiffness_matrix().shape[0]
+
+    # Apply multiple boundary conditions
+    conditions = {
+        0: BoundaryConditionType.FIXED,  # Constrains DOFs 0,1
+        2: BoundaryConditionType.PINNED,  # Constrains DOF 4
+    }
+    beam.apply_boundary_conditions(conditions)
+
+    # Check matrices were reduced
+    K = beam.get_stiffness_matrix()
+    M = beam.get_mass_matrix()
+    expected_size = orig_size - 3  # Removed 3 DOFs
+    assert K.shape == (expected_size, expected_size)
+    assert M.shape == (expected_size, expected_size)
+
+    # Check constrained DOFs
+    constrained = beam.get_constrained_dofs()
+    assert constrained == {0, 1, 4}
+
+
+def test_clear_boundary_conditions(beam_fixture):
+    """Test clearing boundary conditions."""
+    beam = beam_fixture
+
+    # Store original matrices
+    K_orig = beam.get_stiffness_matrix().copy()
+    M_orig = beam.get_mass_matrix().copy()
+
+    # Apply and then clear boundary conditions
+    conditions = {0: BoundaryConditionType.FIXED}
+    beam.apply_boundary_conditions(conditions)
+    beam.clear_boundary_conditions()
+
+    # Check matrices are restored
+    assert not beam.has_boundary_conditions()
+    assert len(beam.get_boundary_conditions()) == 0
+    assert len(beam.get_constrained_dofs()) == 0
+    assert np.allclose(K_orig, beam.get_stiffness_matrix())
+    assert np.allclose(M_orig, beam.get_mass_matrix())
+
+
+def test_invalid_boundary_conditions(beam_fixture):
+    """Test invalid boundary condition scenarios."""
+    beam = beam_fixture
+
+    # Test invalid node index
+    with pytest.raises(ValueError):
+        beam.apply_boundary_conditions({-1: BoundaryConditionType.FIXED})
+
+    # Test constraining all DOFs
+    n_nodes = len(beam.parameters) + 1
+    all_fixed = {i: BoundaryConditionType.FIXED for i in range(n_nodes)}
+    with pytest.raises(ValueError):
+        beam.apply_boundary_conditions(all_fixed)
+
+
+def test_matrix_reduction(beam_fixture):
+    """Test proper reduction of matrices after boundary conditions."""
+    beam = beam_fixture
+
+    # Get original matrices
+    K_orig = beam.get_stiffness_matrix()
+    M_orig = beam.get_mass_matrix()
+
+    # Apply boundary condition to middle node
+    mid_node = len(beam.parameters) // 2
+    beam.apply_boundary_conditions({mid_node: BoundaryConditionType.FIXED})
+
+    # Check reduced matrices
+    K = beam.get_stiffness_matrix()
+    M = beam.get_mass_matrix()
+
+    # Should have removed 2 DOFs
+    assert K.shape[0] == K_orig.shape[0] - 2
+    assert M.shape[0] == M_orig.shape[0] - 2
+
+    # Check remaining matrix is properly formed
+    assert np.all(K.diagonal() != 0)  # No zero diagonal entries
+    assert np.all(M.diagonal() != 0)
+
+
+def test_apply_before_matrix_creation(nitinol_file):
+    """Test applying boundary conditions before creating matrices."""
+    beam = LinearEulerBernoulliBeam(nitinol_file)
+
+    conditions = {0: BoundaryConditionType.FIXED}
+    with pytest.raises(RuntimeError):
+        beam.apply_boundary_conditions(conditions)
+
+
+def test_clear_before_matrix_creation(nitinol_file):
+    """Test clearing boundary conditions before creating matrices."""
+    beam = LinearEulerBernoulliBeam(nitinol_file)
+
+    with pytest.raises(RuntimeError):
+        beam.clear_boundary_conditions()

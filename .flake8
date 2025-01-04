@@ -1,0 +1,30 @@
+[flake8]
+# Line length settings
+max-line-length = 200
+
+# Exclude common patterns and directories
+exclude =
+    .git,
+    __pycache__,
+    build,
+    dist,
+    *.pyc,
+    *.egg-info,
+    .eggs
+
+# Ignore specific errors/warnings
+ignore =
+    # W503: line break before binary operator (contradicts W504)
+    W503,
+    # E226: missing whitespace around arithmetic operator (for matrix operations)
+    E226
+
+# Complexity settings
+max-complexity = 15
+
+# Output formatting
+format = %(path)s:%(row)d:%(col)d: %(code)s %(text)s
+
+# Statistics output
+statistics = True
+count = True
