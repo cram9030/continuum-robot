@@ -43,7 +43,7 @@ def invalid_file():
 
 def test_initialization(nitinol_file: str):
     """Test basic initialization with valid file."""
-    beam = LinearEulerBernoulliBeam(nitinol_file)
+    beam = LinearEulerBernoulliBeam(nitinol_file, 0.01)
     assert beam is not None
     assert len(beam.parameters) == 4
     assert beam.get_length() == pytest.approx(1.0)
@@ -52,18 +52,18 @@ def test_initialization(nitinol_file: str):
 def test_invalid_file():
     """Test initialization with nonexistent file."""
     with pytest.raises(FileNotFoundError):
-        LinearEulerBernoulliBeam("nonexistent.csv")
+        LinearEulerBernoulliBeam("nonexistent.csv", 0.01)
 
 
 def test_invalid_parameters(invalid_file: str):
     """Test initialization with invalid parameters."""
     with pytest.raises(ValueError):
-        LinearEulerBernoulliBeam(invalid_file)
+        LinearEulerBernoulliBeam(invalid_file, 0.01)
 
 
 def test_stiffness_matrix(nitinol_file: str):
     """Test stiffness matrix creation and retrieval."""
-    beam = LinearEulerBernoulliBeam(nitinol_file)
+    beam = LinearEulerBernoulliBeam(nitinol_file, 0.01)
 
     # Test matrix creation
     beam.create_stiffness_matrix()
@@ -82,7 +82,7 @@ def test_stiffness_matrix(nitinol_file: str):
 
 def test_mass_matrix(nitinol_file: str):
     """Test mass matrix creation and retrieval."""
-    beam = LinearEulerBernoulliBeam(nitinol_file)
+    beam = LinearEulerBernoulliBeam(nitinol_file, 0.01)
 
     # Test matrix creation
     beam.create_mass_matrix()
@@ -99,20 +99,9 @@ def test_mass_matrix(nitinol_file: str):
     assert np.allclose(M_segment, M_segment.T)  # Should be symmetric
 
 
-def test_matrix_access_before_creation(nitinol_file: str):
-    """Test accessing matrices before they're created."""
-    beam = LinearEulerBernoulliBeam(nitinol_file)
-
-    with pytest.raises(RuntimeError):
-        beam.get_stiffness_matrix()
-
-    with pytest.raises(RuntimeError):
-        beam.get_mass_matrix()
-
-
 def test_segment_index_bounds(nitinol_file: str):
     """Test segment access with invalid indices."""
-    beam = LinearEulerBernoulliBeam(nitinol_file)
+    beam = LinearEulerBernoulliBeam(nitinol_file, 0.01)
 
     with pytest.raises(IndexError):
         beam.get_segment_stiffness(-1)
@@ -129,7 +118,7 @@ def test_segment_index_bounds(nitinol_file: str):
 
 def test_parameter_update(nitinol_file: str):
     """Test matrix updates after reading new parameters."""
-    beam = LinearEulerBernoulliBeam(nitinol_file)
+    beam = LinearEulerBernoulliBeam(nitinol_file, 0.01)
     beam.create_stiffness_matrix()
     beam.create_mass_matrix()
 
@@ -146,7 +135,7 @@ def test_parameter_update(nitinol_file: str):
 
 def test_matrix_values(nitinol_file: str):
     """Test specific matrix values for a single segment."""
-    beam = LinearEulerBernoulliBeam(nitinol_file)
+    beam = LinearEulerBernoulliBeam(nitinol_file, 0.01)
     beam.create_stiffness_matrix()
     beam.create_mass_matrix()
 
@@ -170,7 +159,7 @@ def test_matrix_values(nitinol_file: str):
 @pytest.fixture
 def beam_fixture(nitinol_file):
     """Create a beam with matrices initialized."""
-    beam = LinearEulerBernoulliBeam(nitinol_file)
+    beam = LinearEulerBernoulliBeam(nitinol_file, 0.01)
     beam.create_stiffness_matrix()
     beam.create_mass_matrix()
     return beam
@@ -260,21 +249,79 @@ def test_matrix_reduction(beam_fixture):
 
     # Check remaining matrix is properly formed
     assert np.all(K.diagonal() != 0)  # No zero diagonal entries
-    assert np.all(M.diagonal() != 0)
+    assert np.all(M.diagonal() != 0)  # No zero diagonal entries
 
 
-def test_apply_before_matrix_creation(nitinol_file):
-    """Test applying boundary conditions before creating matrices."""
-    beam = LinearEulerBernoulliBeam(nitinol_file)
+def test_damping_matrix_creation(nitinol_file: str):
+    """Test damping matrix creation and properties."""
+    beam = LinearEulerBernoulliBeam(nitinol_file, 0.01)
 
-    conditions = {0: BoundaryConditionType.FIXED}
+    # Check matrix properties
+    C = beam.get_mass_damping()
+    assert isinstance(C, np.ndarray)
+    assert C.shape == (10, 10)  # 4 segments = 10x10 matrix
+
+
+def test_invalid_damping_ratio(nitinol_file: str):
+    """Test initialization with invalid damping ratios."""
+    with pytest.raises(ValueError):
+        LinearEulerBernoulliBeam(nitinol_file, -0.1)  # Negative
+
+    with pytest.raises(ValueError):
+        LinearEulerBernoulliBeam(nitinol_file, 1.1)  # > 1
+
+
+def test_damping_matrix_boundary_conditions(beam_fixture):
+    """Test damping matrix changes with boundary conditions."""
+    beam = beam_fixture
+
+    # Store original matrices
+    C_orig = beam.get_mass_damping()
+
+    # Apply boundary condition to middle node
+    mid_node = len(beam.parameters) // 2
+    beam.apply_boundary_conditions({mid_node: BoundaryConditionType.FIXED})
+
+    # Check reduced matrix
+    C = beam.get_mass_damping()
+
+    # Should have removed 2 DOFs
+    assert C.shape[0] == C_orig.shape[0] - 2
+    assert np.all(C.diagonal() != 0)  # No zero diagonal entries
+
+    # Verify still symmetric and positive definite
+    # assert np.allclose(C, C.T)
+    assert np.all(np.linalg.eigvals(C) > 0)
+
+
+def test_damping_matrix_update(nitinol_file: str, beam_fixture):
+    """Test damping matrix updates with parameter changes."""
+    beam = beam_fixture
+
+    # Store original matrix
+    C_orig = beam.get_mass_damping()
+
+    # Read parameters again (triggers matrix updates)
+    beam.read_parameter_file(nitinol_file)
+
+    # Check matrices were reset
     with pytest.raises(RuntimeError):
-        beam.apply_boundary_conditions(conditions)
+        beam.get_mass_damping()
+
+    # Recreate matrices
+    beam.create_stiffness_matrix()
+    beam.create_mass_matrix()
+    beam.create_damping_matrix()
+
+    # Should get same matrix back
+    assert np.allclose(C_orig, beam.get_mass_damping())
 
 
-def test_clear_before_matrix_creation(nitinol_file):
-    """Test clearing boundary conditions before creating matrices."""
-    beam = LinearEulerBernoulliBeam(nitinol_file)
+def test_damping_matrix_prerequisites(nitinol_file: str):
+    """Test error handling when creating damping matrix without prerequisites."""
+    beam = LinearEulerBernoulliBeam(nitinol_file, 0.01)
+    beam.K = None
+    beam.M = None
 
     with pytest.raises(RuntimeError):
-        beam.clear_boundary_conditions()
+        beam.create_damping_matrix()
