@@ -15,6 +15,9 @@ init_conda() {
     $CONDA_PATH init bash
 }
 
+# Get the project root directory
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
 # Check if miniconda directory exists
 if [ -d "$HOME/miniconda3" ]; then
     echo "Miniconda directory found..."
@@ -38,7 +41,7 @@ if command -v conda &> /dev/null; then
 
     # Create conda environment
     echo "Creating conda environment..."
-    conda env create -f environment.yml
+    conda env create -f "${PROJECT_ROOT}/environment.yml"
 
     # Activate environment
     echo "Activating environment..."
@@ -47,7 +50,12 @@ if command -v conda &> /dev/null; then
 
     # Install additional dependencies
     echo "Installing additional dependencies..."
-    pip install -r requirements.txt
+    pip install -r "${PROJECT_ROOT}/requirements.txt"
+
+    # Install Jupyter Lab extensions
+    echo "Installing Jupyter Lab extensions..."
+    jupyter labextension install @jupyterlab/toc
+    jupyter labextension install @jupyterlab/git
 
     # Setup pre-commit hooks
     echo "Setting up pre-commit hooks..."
@@ -62,3 +70,6 @@ fi
 
 echo "Setup complete! Please run 'source ~/.bashrc' or restart your terminal,"
 echo "then use 'conda activate continuum_robot' to start working."
+
+# Create notebook directory if it doesn't exist
+mkdir -p "${PROJECT_ROOT}/notebooks"

@@ -1,0 +1,19 @@
+# Extend base Dockerfile
+FROM continuum_robot
+
+# Install system dependencies for Jupyter
+RUN apt-get update && apt-get install -y \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Expose Jupyter port
+EXPOSE 8888
+
+# Set up working directory for notebooks
+WORKDIR /app/notebooks
+
+# Start Jupyter Lab
+CMD ["conda", "run", "--no-capture-output", "-n", "continuum_robot", \
+     "jupyter", "lab", "--ip=0.0.0.0", "--port=8888", \
+     "--no-browser", "--allow-root", "--NotebookApp.token=''"]

@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  continuum_robot:
+  test:
     build:
       context: ..
       dockerfile: environment/docker/Dockerfile
@@ -11,3 +11,16 @@ services:
     environment:
       - PYTHONPATH=/app
     command: conda run --no-capture-output -n continuum_robot pytest tests/
+
+  jupyter:
+    build:
+      context: ..
+      dockerfile: environment/docker/Dockerfile.jupyter
+    ports:
+      - "8888:8888"
+    volumes:
+      - ../notebooks:/app/notebooks
+      - ../src:/app/src
+      - ../tests:/app/tests
+    environment:
+      - PYTHONPATH=/app
