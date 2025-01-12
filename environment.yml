@@ -1,4 +1,3 @@
-# environment.yml
 name: continuum_robot
 channels:
   - conda-forge
@@ -7,6 +6,12 @@ dependencies:
   - python=3.10
   - numpy
   - scipy
+  - pandas
+  - jupyter
+  - jupyterlab
+  - ipywidgets
+  - matplotlib
   - pip
   - pip:
+    - symforce-opt
     - "-r requirements.txt"
