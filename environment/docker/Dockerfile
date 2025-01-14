@@ -1,3 +1,4 @@
+# Base image
 FROM ubuntu:24.04
 
 # Prevent interactive prompts during build
@@ -10,6 +11,8 @@ RUN ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime
 RUN apt-get update && apt-get install -y \
     wget \
     git \
+    python3-dev \
+    graphviz \
     && rm -rf /var/lib/apt/lists/*
 
 # Set up working directory

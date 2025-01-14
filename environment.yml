@@ -11,7 +11,8 @@ dependencies:
   - jupyterlab
   - ipywidgets
   - matplotlib
+  - sympy  # Required for SymForce
   - pip
   - pip:
-    - symforce-opt
+    - symforce      # Base SymForce package
     - "-r requirements.txt"
