@@ -100,12 +100,12 @@ class NonlinearEulerBernoulliBeam:
 
             # Implement the nonlinear stiffness function f1-f6
             # from the provided equations
-            f1 = partial(_f_1_expr, l=seg_l, A_xx=EA)
-            f2 = partial(_f_2_expr, l=seg_l, A_xx=EA)
-            f3 = partial(_f_3_expr, l=seg_l, A_xx=EA, D_xx=EI)
-            f4 = partial(_f_4_expr, l=seg_l, A_xx=EA, D_xx=EI)
-            f5 = partial(_f_5_expr, l=seg_l, A_xx=EA, D_xx=EI)
-            f6 = partial(_f_6_expr, l=seg_l, A_xx=EA, D_xx=EI)
+            f1 = partial(_f_1_expr, length=seg_l, A_xx=EA)
+            f2 = partial(_f_2_expr, length=seg_l, A_xx=EA)
+            f3 = partial(_f_3_expr, length=seg_l, A_xx=EA, D_xx=EI)
+            f4 = partial(_f_4_expr, length=seg_l, A_xx=EA, D_xx=EI)
+            f5 = partial(_f_5_expr, length=seg_l, A_xx=EA, D_xx=EI)
+            f6 = partial(_f_6_expr, length=seg_l, A_xx=EA, D_xx=EI)
 
             # Evaluate with remaining variables
             return np.array(
