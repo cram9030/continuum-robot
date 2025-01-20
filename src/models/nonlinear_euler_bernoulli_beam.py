@@ -111,9 +111,9 @@ class NonlinearEulerBernoulliBeam:
             return np.array(
                 [
                     f1(u1, theta1, w1, u2, theta2, w2),
-                    f2(u1, theta1, w1, u2, theta2, w2),
                     f3(u1, theta1, w1, u2, theta2, w2),
                     f4(u1, theta1, w1, u2, theta2, w2),
+                    f2(u1, theta1, w1, u2, theta2, w2),
                     f5(u1, theta1, w1, u2, theta2, w2),
                     f6(u1, theta1, w1, u2, theta2, w2),
                 ]
