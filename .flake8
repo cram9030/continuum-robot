@@ -17,7 +17,9 @@ ignore =
     # W503: line break before binary operator (contradicts W504)
     W503,
     # E226: missing whitespace around arithmetic operator (for matrix operations)
-    E226
+    E226,
+    # E203: whitespace before ':'
+    E203
 
 # Complexity settings
 max-complexity = 15
