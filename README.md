@@ -55,6 +55,8 @@ docker compose up test
 
 # Or from any directory using -f flag
 docker compose -f /path/to/continuum-robot/environment/docker-compose.yml up test
+# from root
+docker compose -f environment/docker-compose.yml up test
 ```
 
 ### Development with Jupyter
