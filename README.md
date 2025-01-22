@@ -30,8 +30,10 @@ jupyter lab
 
 1. Jupyter Lab will open in your default browser at http://localhost:8888
 2. Navigate to notebooks/ directory to access development notebooks
-3. Generated code will be saved to src/symbolic/ directory
-4. Run tests using:
+3. Generated code will be saved to src/notebooks/ directory
+
+#### Runing Tests
+Run tests using:
 ```
 pytest tests/
 ```
