@@ -34,7 +34,9 @@ class LinearEulerBernoulliBeam:
         M (sparse.csr_matrix): Global mass matrix in sparse format
     """
 
-    def __init__(self, filename: Union[str, pathlib.Path], damping_ratio: float):
+    def __init__(
+        self, parameters: Union[str, pathlib.Path, pd.DataFrame], damping_ratio: float
+    ):
         """
         Initialize beam with parameters from CSV file.
 
@@ -54,12 +56,68 @@ class LinearEulerBernoulliBeam:
         self.M = None
         self.C = None
         self.damping_ratio = damping_ratio
-        self.read_parameter_file(filename)
+
+        if isinstance(parameters, (str, pathlib.Path)):
+            # Load from CSV
+            try:
+                self.parameters = pd.read_csv(parameters)
+            except FileNotFoundError:
+                raise FileNotFoundError(f"Parameter file {parameters} not found")
+        elif isinstance(parameters, pd.DataFrame):
+            # Use DataFrame directly
+            self.parameters = parameters.copy()
+        else:
+            raise TypeError("Parameters must be filepath or pandas DataFrame")
+
+        # Validate parameters
+        self.validate_parameters(self.parameters)
+
         self._boundary_conditions: Dict[int, BoundaryConditionType] = {}
         self._boundary_conditions_applied = False
         self._constrained_dofs: Set[int] = set()  # Track constrained DOFs
 
         # Create matrices
+        self.create_stiffness_matrix()
+        self.create_mass_matrix()
+        self.create_damping_matrix()
+
+    def validate_parameters(self, parameters: pd.DataFrame) -> None:
+        """
+        Validate beam parameters from DataFrame.
+
+        Args:
+            parameters: DataFrame containing beam parameters
+
+        Raises:
+            ValueError: If parameters are invalid or physically impossible
+        """
+        required_cols = [
+            "length",
+            "elastic_modulus",
+            "moment_inertia",
+            "density",
+            "cross_area",
+        ]
+
+        # Check required columns exist
+        if not all(col in parameters.columns for col in required_cols):
+            raise ValueError(
+                f"DataFrame must contain columns: {', '.join(required_cols)}"
+            )
+
+        # Check for physical validity
+        if (parameters[required_cols] <= 0).any().any():
+            raise ValueError("All parameters must be positive")
+
+    def update_parameters(self, parameters: pd.DataFrame) -> None:
+        """
+        Update beam parameters and recreate matrices.
+
+        Args:
+            parameters: DataFrame containing new beam parameters
+        """
+        self.validate_parameters(parameters)
+        self.parameters = parameters.copy()
         self.create_stiffness_matrix()
         self.create_mass_matrix()
         self.create_damping_matrix()

@@ -23,21 +23,85 @@ class NonlinearEulerBernoulliBeam:
         M (sparse.csr_matrix): Global mass matrix in sparse format
     """
 
-    def __init__(self, filename: Union[str, pathlib.Path]):
+    def __init__(self, parameters: Union[str, pathlib.Path, pd.DataFrame]):
         """
-        Initialize beam with parameters from CSV file.
+        Initialize beam with parameters from CSV file or DataFrame.
 
         Args:
-            filename: Path to CSV file containing beam parameters
+            parameters: Either path to CSV file or pandas DataFrame containing:
+                    - length: Segment lengths
+                    - elastic_modulus: Young's modulus values
+                    - moment_inertia: Cross-sectional moment of inertia values
+                    - density: Material density values
+                    - cross_area: Cross-sectional area values
 
         Raises:
-            FileNotFoundError: If file doesn't exist
-            ValueError: If file format is invalid
+            FileNotFoundError: If CSV file doesn't exist
+            ValueError: If parameters are invalid
         """
         self.parameters = None
         self.stiffness_func = None
         self.M = None
-        self.read_parameter_file(filename)
+
+        if isinstance(parameters, (str, pathlib.Path)):
+            # Load from CSV
+            try:
+                self.parameters = pd.read_csv(parameters)
+            except FileNotFoundError:
+                raise FileNotFoundError(f"Parameter file {parameters} not found")
+        elif isinstance(parameters, pd.DataFrame):
+            # Use DataFrame directly
+            self.parameters = parameters.copy()
+        else:
+            raise TypeError("Parameters must be filepath or pandas DataFrame")
+
+        # Validate parameters
+        self.validate_parameters(self.parameters)
+
+    def validate_parameters(self, parameters: pd.DataFrame) -> None:
+        """
+        Validate beam parameters from DataFrame.
+
+        Args:
+            parameters: DataFrame containing beam parameters
+
+        Raises:
+            ValueError: If parameters are invalid or physically impossible
+        """
+        required_cols = [
+            "length",
+            "elastic_modulus",
+            "moment_inertia",
+            "density",
+            "cross_area",
+        ]
+
+        # Check required columns exist
+        if not all(col in parameters.columns for col in required_cols):
+            raise ValueError(
+                f"DataFrame must contain columns: {', '.join(required_cols)}"
+            )
+
+        # Check for physical validity
+        if (parameters[required_cols] <= 0).any().any():
+            raise ValueError("All parameters must be positive")
+
+    def update_parameters(self, parameters: pd.DataFrame) -> None:
+        """
+        Update beam parameters with new DataFrame.
+
+        Args:
+            parameters: DataFrame containing new beam parameters
+
+        Raises:
+            ValueError: If parameters are invalid
+        """
+        self.validate_parameters(parameters)
+        self.parameters = parameters.copy()
+
+        # Reset matrices/functions since parameters changed
+        self.stiffness_func = None
+        self.M = None
 
     def read_parameter_file(self, filename: Union[str, pathlib.Path]) -> None:
         """

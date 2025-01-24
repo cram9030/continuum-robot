@@ -2,6 +2,7 @@ import pytest
 import numpy as np
 import tempfile
 import os
+import pandas as pd
 
 from linear_euler_bernoulli_beam import LinearEulerBernoulliBeam, BoundaryConditionType
 
@@ -39,6 +40,91 @@ def invalid_file():
 
     yield f.name
     os.unlink(f.name)
+
+
+@pytest.fixture
+def valid_parameters():
+    """Create a DataFrame with valid Nitinol beam parameters."""
+    return pd.DataFrame(
+        {
+            "length": [0.25] * 4,
+            "elastic_modulus": [75e9] * 4,
+            "moment_inertia": [4.91e-10] * 4,
+            "density": [6450] * 4,
+            "cross_area": [7.85e-5] * 4,
+        }
+    )
+
+
+def test_dataframe_initialization(valid_parameters):
+    """Test initialization with valid DataFrame."""
+    beam = LinearEulerBernoulliBeam(valid_parameters, 0.01)
+    assert beam is not None
+    assert len(beam.parameters) == 4
+    assert beam.get_length() == pytest.approx(1.0)
+
+
+def test_invalid_dataframe():
+    """Test initialization with invalid DataFrame."""
+    # Missing required column
+    invalid_df = pd.DataFrame(
+        {
+            "length": [0.25],
+            "elastic_modulus": [75e9],
+            "density": [6450],
+            "cross_area": [7.85e-5],
+        }
+    )
+    with pytest.raises(ValueError):
+        LinearEulerBernoulliBeam(invalid_df, 0.01)
+
+    # Negative value
+    invalid_df = pd.DataFrame(
+        {
+            "length": [0.25],
+            "elastic_modulus": [75e9],
+            "moment_inertia": [-4.91e-10],  # Negative
+            "density": [6450],
+            "cross_area": [7.85e-5],
+        }
+    )
+    with pytest.raises(ValueError):
+        LinearEulerBernoulliBeam(invalid_df, 0.01)
+
+
+def test_invalid_input_type():
+    """Test initialization with invalid input type."""
+    with pytest.raises(TypeError):
+        LinearEulerBernoulliBeam([1, 2, 3], 0.01)  # List instead of DataFrame or path
+
+
+def test_dataframe_modification(valid_parameters):
+    """Test that modifying input DataFrame doesn't affect beam."""
+    beam = LinearEulerBernoulliBeam(valid_parameters, 0.01)
+    original_length = beam.get_length()
+
+    # Modify input DataFrame
+    valid_parameters.iloc[0, 0] = 0.5
+
+    # Beam should be unchanged
+    assert beam.get_length() == original_length
+
+
+def test_parameter_update_with_dataframe(valid_parameters):
+    """Test updating parameters with new DataFrame."""
+    beam = LinearEulerBernoulliBeam(valid_parameters, 0.01)
+    beam.create_stiffness_matrix()
+    beam.create_mass_matrix()
+    beam.create_damping_matrix()
+
+    # Update with new parameters
+    new_parameters = valid_parameters.copy()
+    new_parameters["length"] = [0.5] * 4
+
+    beam.update_parameters(new_parameters)
+
+    # Check length was updated
+    assert beam.get_length() == pytest.approx(2.0)
 
 
 def test_initialization(nitinol_file: str):
