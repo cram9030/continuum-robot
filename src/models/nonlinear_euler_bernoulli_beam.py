@@ -1,9 +1,17 @@
 import numpy as np
 import pandas as pd
 from scipy import sparse
-from typing import Union, Callable
+from typing import Dict, Set, Union, Callable
 import pathlib
 from functools import partial
+from enum import Enum
+
+
+class BoundaryConditionType(Enum):
+    """Enumeration of supported boundary condition types."""
+
+    FIXED = "fixed"  # Both displacement and rotation fixed
+    PINNED = "pinned"  # Displacement fixed, rotation free
 
 
 class NonlinearEulerBernoulliBeam:
@@ -42,6 +50,11 @@ class NonlinearEulerBernoulliBeam:
         self.parameters = None
         self.stiffness_func = None
         self.M = None
+
+        # Initialize boundary condition tracking
+        self._boundary_conditions: Dict[int, BoundaryConditionType] = {}
+        self._boundary_conditions_applied = False
+        self._constrained_dofs: Set[int] = set()
 
         if isinstance(parameters, (str, pathlib.Path)):
             # Load from CSV
@@ -643,76 +656,89 @@ class NonlinearEulerBernoulliBeam:
         start_idx = 6 * i
         global_f[start_idx : start_idx + 6] += segment_f
 
-    def apply_pinned_boundary(self, node_index: int) -> None:
+    def apply_boundary_conditions(
+        self, conditions: Dict[int, BoundaryConditionType]
+    ) -> None:
         """
-        Apply pinned boundary condition at specified node.
-        A pinned boundary condition constrains displacement but allows rotation.
+        Apply multiple boundary conditions.
 
         Args:
-            node_index: Index of node to apply boundary condition
+            conditions: Dictionary mapping node indices to boundary condition types
 
         Raises:
-            RuntimeError: If stiffness function hasn't been created yet
+            ValueError: If any node index is invalid
+            RuntimeError: If stiffness function hasn't been created
         """
         if self.stiffness_func is None:
             raise RuntimeError(
                 "Stiffness function must be created before applying boundary conditions"
             )
 
+        # Validate all node indices first
+        n_nodes = len(self.parameters) + 1
+        for node_idx in conditions:
+            if node_idx < 0 or node_idx >= n_nodes:
+                raise ValueError(f"Node index {node_idx} out of range [0, {n_nodes-1}]")
+
+        # Track DOFs to be constrained
+        dofs_to_constrain = set()
+
+        # Process all boundary conditions
+        for node_idx, bc_type in conditions.items():
+            base_idx = node_idx * 3  # Each node has 3 components [u, θ, w]
+
+            if bc_type == BoundaryConditionType.FIXED:
+                # Constrain all DOFs for node
+                dofs_to_constrain.add(base_idx)  # u (axial displacement)
+                dofs_to_constrain.add(base_idx + 1)  # θ (rotation)
+                dofs_to_constrain.add(base_idx + 2)  # w (transverse displacement)
+            elif bc_type == BoundaryConditionType.PINNED:
+                # Constrain only displacements
+                dofs_to_constrain.add(base_idx)  # u (axial displacement)
+                dofs_to_constrain.add(base_idx + 2)  # w (transverse displacement)
+            else:
+                raise ValueError(f"Unsupported boundary condition type: {bc_type}")
+
+            self._boundary_conditions[node_idx] = bc_type
+
         # Create wrapper around current stiffness function
         original_stiffness = self.stiffness_func
 
         def stiffness_with_boundary(x: np.ndarray) -> np.ndarray:
-            # Calculate forces using original function
             forces = original_stiffness(x)
-
-            # Get indices for displacement components
-            u_idx = node_index * 3  # Each node has 3 components [u, θ, w]
-            w_idx = u_idx + 2
-
-            # Zero out displacement forces
-            forces[u_idx] = 0.0  # Axial displacement
-            forces[w_idx] = 0.0  # Transverse displacement
-
+            # Zero out forces for constrained DOFs
+            for dof in dofs_to_constrain:
+                forces[dof] = 0.0
             return forces
 
-        # Replace stiffness function with wrapper
+        # Update tracking variables
+        self._constrained_dofs = dofs_to_constrain
+        self._boundary_conditions_applied = True
         self.stiffness_func = stiffness_with_boundary
 
-    def apply_clamped_boundary(self, node_index: int) -> None:
-        """
-        Apply clamped boundary condition at specified node.
-        A clamped boundary condition constrains both displacement and rotation.
-
-        Args:
-            node_index: Index of node to apply boundary condition
-
-        Raises:
-            RuntimeError: If stiffness function hasn't been created yet
-        """
+    def clear_boundary_conditions(self) -> None:
+        """Clear all boundary conditions and recreate original stiffness function."""
         if self.stiffness_func is None:
             raise RuntimeError(
-                "Stiffness function must be created before applying boundary conditions"
+                "Stiffness function must be created before clearing boundary conditions"
             )
 
-        # Create wrapper around current stiffness function
-        original_stiffness = self.stiffness_func
+        # Recreate original stiffness function
+        self.create_stiffness_function()
 
-        def stiffness_with_boundary(x: np.ndarray) -> np.ndarray:
-            # Calculate forces using original function
-            forces = original_stiffness(x)
+        # Clear stored boundary conditions
+        self._boundary_conditions.clear()
+        self._constrained_dofs.clear()
+        self._boundary_conditions_applied = False
 
-            # Get indices for all components
-            u_idx = node_index * 3  # Each node has 3 components [u, θ, w]
-            theta_idx = u_idx + 1
-            w_idx = u_idx + 2
+    def get_boundary_conditions(self) -> Dict[int, BoundaryConditionType]:
+        """Get currently applied boundary conditions."""
+        return self._boundary_conditions.copy()
 
-            # Zero out all forces
-            forces[u_idx] = 0.0  # Axial displacement
-            forces[theta_idx] = 0.0  # Rotation
-            forces[w_idx] = 0.0  # Transverse displacement
+    def get_constrained_dofs(self) -> Set[int]:
+        """Get indices of constrained degrees of freedom."""
+        return self._constrained_dofs.copy()
 
-            return forces
-
-        # Replace stiffness function with wrapper
-        self.stiffness_func = stiffness_with_boundary
+    def has_boundary_conditions(self) -> bool:
+        """Check if boundary conditions have been applied."""
+        return self._boundary_conditions_applied
