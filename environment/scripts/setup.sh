@@ -29,9 +29,25 @@ if [ -d "$HOME/miniconda3" ]; then
     fi
 else
     echo "Installing Miniconda..."
-    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-    bash Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda3
-    rm Miniconda3-latest-Linux-x86_64.sh
+    #check if mac
+    if [ $OSTYPE == 'darwin'* ]; then
+        #if apple silicon
+        if [uname -p == 'arm']; then
+            curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh
+            bash Miniconda3-latest-MacOSX-arm64.sh -b -p $HOME/miniconda3
+            rm Miniconda3-latest-MacOSX-arm64.sh
+        #if intel
+        else
+            curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
+            bash Miniconda3-latest-MacOSX-x86_64.sh -b -p $HOME/miniconda3
+            rm Miniconda3-latest-MacOSX-x86_64.sh
+        fi
+    #otherwise assume linux
+    else
+        wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+        bash Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda3
+        rm Miniconda3-latest-Linux-x86_64.sh
+    fi
     init_conda
 fi
 
