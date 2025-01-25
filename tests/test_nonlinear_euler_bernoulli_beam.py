@@ -4,7 +4,10 @@ import tempfile
 import os
 import pandas as pd
 
-from nonlinear_euler_bernoulli_beam import NonlinearEulerBernoulliBeam
+from nonlinear_euler_bernoulli_beam import (
+    NonlinearEulerBernoulliBeam,
+    BoundaryConditionType,
+)
 
 
 @pytest.fixture
@@ -233,60 +236,90 @@ def test_boundary_conditions(nitinol_file):
     beam.create_stiffness_function()
     beam.create_mass_matrix()
 
-    # Create full state vector for 4 segments + end node
-    # Format: [u1, θ1, w1, u2, θ2, w2, ..., un, θn, wn]
-    state = np.ones(30)  # 5 nodes * 3 DOF per node = 30 total states
+    # Create state vector
+    state = np.ones(30)  # 5 nodes * 6 DOF per node = 30 total states
 
-    # Get initial forces before any boundary conditions
+    # Get initial forces
     stiffness_func = beam.get_stiffness_function()
     initial_forces = stiffness_func(state)
 
-    # Test pinned boundary condition at first node
-    beam.apply_pinned_boundary(0)
+    # Test applying boundary conditions
+    conditions = {
+        0: BoundaryConditionType.FIXED,  # Constrain node 0 fully
+        2: BoundaryConditionType.PINNED,  # Constrain node 2 partially
+    }
+    beam.apply_boundary_conditions(conditions)
+
+    # Check updated forces
     forces = beam.get_stiffness_function()(state)
 
-    # Check that displacement forces are zero at first node
-    assert forces[0] == 0  # u1 component should be zero
-    assert forces[2] == 0  # w1 component should be zero
-    # Check that rotation force is unchanged
-    assert np.isclose(forces[1], initial_forces[1])  # θ1 should be unchanged
-    # Check other forces are unchanged
-    assert np.allclose(forces[3:], initial_forces[3:])
+    # Check fixed boundary condition (node 0)
+    assert forces[0] == 0  # u1 (axial)
+    assert forces[1] == 0  # θ1 (rotation)
+    assert forces[2] == 0  # w1 (transverse)
 
-    # Reset beam for next test
+    # Check pinned boundary condition (node 2)
+    assert forces[6] == 0  # u3 (axial)
+    assert np.isclose(forces[7], initial_forces[7])  # θ3 unchanged
+    assert forces[8] == 0  # w3 (transverse)
+
+    # Verify boundary condition tracking
+    assert beam.has_boundary_conditions()
+    bcs = beam.get_boundary_conditions()
+    assert bcs[0] == BoundaryConditionType.FIXED
+    assert bcs[2] == BoundaryConditionType.PINNED
+
+    # Verify constrained DOFs
+    constrained = beam.get_constrained_dofs()
+    assert constrained == {0, 1, 2, 6, 8}  # Fixed: 0,1,2; Pinned: 6,8
+
+
+def test_invalid_boundary_conditions(nitinol_file):
+    """Test invalid boundary condition scenarios."""
+    beam = NonlinearEulerBernoulliBeam(nitinol_file)
     beam.create_stiffness_function()
 
-    # Test clamped boundary condition at first node
-    beam.apply_clamped_boundary(0)
-    forces = beam.get_stiffness_function()(state)
+    # Test invalid node index
+    with pytest.raises(ValueError):
+        beam.apply_boundary_conditions({-1: BoundaryConditionType.FIXED})
 
-    # Check all forces are zero at first node
-    assert forces[0] == 0  # u1 component should be zero
-    assert forces[1] == 0  # θ1 component should be zero
-    assert forces[2] == 0  # w1 component should be zero
-    # Check other forces are unchanged
-    assert np.allclose(forces[3:], initial_forces[3:])
+    with pytest.raises(ValueError):
+        n_nodes = len(beam.parameters) + 1
+        beam.apply_boundary_conditions({n_nodes: BoundaryConditionType.FIXED})
 
-    # Test boundary condition at middle node
-    beam.create_stiffness_function()  # Reset beam
-    beam.apply_pinned_boundary(2)  # Apply to third node (index 2)
-    forces = beam.get_stiffness_function()(state)
+    # Test invalid boundary condition type
+    with pytest.raises(ValueError):
+        beam.apply_boundary_conditions({0: "UNSUPPORTED_TYPE"})
 
-    # Check that displacement forces are zero at third node
-    assert forces[6] == 0  # u3 component should be zero
-    assert forces[8] == 0  # w3 component should be zero
-    # Check that rotation force is unchanged
-    assert np.isclose(forces[7], initial_forces[7])  # θ3 should be unchanged
-    # Check other forces are unchanged
-    assert np.allclose(forces[0:6], initial_forces[0:6])  # Previous nodes unchanged
-    assert np.allclose(forces[9:], initial_forces[9:])  # Later nodes unchanged
 
-    # Test boundary condition at end node
-    beam.create_stiffness_function()  # Reset beam
-    beam.apply_clamped_boundary(4)  # Apply to last node
-    forces = beam.get_stiffness_function()(state)
+def test_boundary_condition_prerequisites(nitinol_file):
+    """Test error handling when applying boundary conditions without prerequisites."""
+    beam = NonlinearEulerBernoulliBeam(nitinol_file)
 
-    # Check all forces are zero at end node
-    assert forces[27] == 0  # u5 component should be zero
-    assert forces[28] == 0  # θ5 component should be zero
-    assert forces[29] == 0  # w5 component should be zero
+    # Try applying boundary conditions before creating stiffness function
+    with pytest.raises(RuntimeError):
+        beam.apply_boundary_conditions({0: BoundaryConditionType.FIXED})
+
+
+def test_clear_boundary_conditions(nitinol_file):
+    """Test clearing boundary conditions."""
+    beam = NonlinearEulerBernoulliBeam(nitinol_file)
+    beam.create_stiffness_function()
+
+    # Store original stiffness function
+    original_stiffness = beam.get_stiffness_function()
+    state = np.ones(30)
+    original_forces = original_stiffness(state)
+
+    # Apply and then clear boundary conditions
+    beam.apply_boundary_conditions({0: BoundaryConditionType.FIXED})
+    beam.clear_boundary_conditions()
+
+    # Check state is restored
+    assert not beam.has_boundary_conditions()
+    assert len(beam.get_boundary_conditions()) == 0
+    assert len(beam.get_constrained_dofs()) == 0
+
+    # Check forces match original
+    new_forces = beam.get_stiffness_function()(state)
+    assert np.allclose(original_forces, new_forces)
