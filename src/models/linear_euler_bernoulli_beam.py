@@ -414,7 +414,7 @@ class LinearEulerBernoulliBeam:
             self._boundary_conditions[node_idx] = bc_type
 
         # Get list of DOFs to keep
-        all_dofs = set(range(self.K.shape[0]))
+        all_dofs = set(range(self.M.shape[0]))
         dofs_to_keep = sorted(list(all_dofs - dofs_to_constrain))
 
         if not dofs_to_keep:  # All DOFs constrained

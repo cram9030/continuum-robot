@@ -1,17 +1,11 @@
 import numpy as np
 import pandas as pd
 from scipy import sparse
-from typing import Dict, Set, Union, Callable
+from typing import Dict, Set, Union, Callable, List
 import pathlib
 from functools import partial
-from enum import Enum
 
-
-class BoundaryConditionType(Enum):
-    """Enumeration of supported boundary condition types."""
-
-    FIXED = "fixed"  # Both displacement and rotation fixed
-    PINNED = "pinned"  # Displacement fixed, rotation free
+from linear_euler_bernoulli_beam import BoundaryConditionType
 
 
 class NonlinearEulerBernoulliBeam:
@@ -50,6 +44,7 @@ class NonlinearEulerBernoulliBeam:
         self.parameters = None
         self.stiffness_func = None
         self.M = None
+        self.segment_stiffness_functions: List[Callable] = []
 
         # Initialize boundary condition tracking
         self._boundary_conditions: Dict[int, BoundaryConditionType] = {}
@@ -112,6 +107,9 @@ class NonlinearEulerBernoulliBeam:
         self.validate_parameters(parameters)
         self.parameters = parameters.copy()
 
+        # Clear stored functions since parameters changed
+        self.segment_stiffness_functions.clear()
+
         # Reset matrices/functions since parameters changed
         self.stiffness_func = None
         self.M = None
@@ -156,6 +154,23 @@ class NonlinearEulerBernoulliBeam:
         except FileNotFoundError:
             raise FileNotFoundError(f"Parameter file {filename} not found")
 
+    def _calculate_segment_mass(self, i: int) -> np.ndarray:
+        """Calculate mass matrix for segment i."""
+        row = self.parameters.iloc[i]
+        L = row["length"]
+        rhoA = row["density"] * row["cross_area"]
+
+        return np.array(
+            [
+                [140, 0, 0, 70, 0, 0],
+                [0, 156, -22 * L, 0, 54, 13 * L],
+                [0, -22 * L, 4 * L**2, 0, -13 * L, -3 * L**2],
+                [70, 0, 0, 140, 0, 0],
+                [0, 54, -13 * L, 0, 156, 22 * L],
+                [0, 13 * L, -3 * L**2, 0, 22 * L, 4 * L**2],
+            ]
+        ) * (rhoA * L / 420)
+
     def _calculate_segment_stiffness_function(self, i: int) -> Callable:
         """
         Calculate nonlinear stiffness function for segment i.
@@ -173,7 +188,7 @@ class NonlinearEulerBernoulliBeam:
 
         def stiffness_func(x: np.ndarray) -> np.ndarray:
             # Get states for this segment
-            u1, theta1, w1, u2, theta2, w2 = x
+            u1, w1, theta1, u2, w2, theta2 = x
 
             # Implement the nonlinear stiffness function f1-f6
             # from the provided equations
@@ -187,16 +202,16 @@ class NonlinearEulerBernoulliBeam:
             # Evaluate with remaining variables
             return np.array(
                 [
-                    f1(u1, theta1, w1, u2, theta2, w2),
-                    f3(u1, theta1, w1, u2, theta2, w2),
-                    f4(u1, theta1, w1, u2, theta2, w2),
-                    f2(u1, theta1, w1, u2, theta2, w2),
-                    f5(u1, theta1, w1, u2, theta2, w2),
-                    f6(u1, theta1, w1, u2, theta2, w2),
+                    f1(u1, w1, theta1, u2, w2, theta2),
+                    f3(u1, w1, theta1, u2, w2, theta2),
+                    f4(u1, w1, theta1, u2, w2, theta2),
+                    f2(u1, w1, theta1, u2, w2, theta2),
+                    f5(u1, w1, theta1, u2, w2, theta2),
+                    f6(u1, w1, theta1, u2, w2, theta2),
                 ]
             )
 
-        def _f_1_expr(u1, theta1, w1, u2, theta2, w2, *, length: float, A_xx: float):
+        def _f_1_expr(u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float):
             """
             Expression for axial force at node 1.
 
@@ -247,7 +262,7 @@ class NonlinearEulerBernoulliBeam:
                 / length**2
             )
 
-        def _f_2_expr(u1, theta1, w1, u2, theta2, w2, *, length: float, A_xx: float):
+        def _f_2_expr(u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float):
             """
             Expression for bending force at node 1.
 
@@ -298,7 +313,7 @@ class NonlinearEulerBernoulliBeam:
             )
 
         def _f_3_expr(
-            u1, theta1, w1, u2, theta2, w2, *, length: float, A_xx: float, D_xx: float
+            u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float, D_xx: float
         ):
             """
             Expression for bending moment at node 1.
@@ -354,7 +369,7 @@ class NonlinearEulerBernoulliBeam:
             )
 
         def _f_4_expr(
-            u1, theta1, w1, u2, theta2, w2, *, length: float, A_xx: float, D_xx: float
+            u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float, D_xx: float
         ):
             """
             Expression for axial force at node 2.
@@ -405,7 +420,7 @@ class NonlinearEulerBernoulliBeam:
             )
 
         def _f_5_expr(
-            u1, theta1, w1, u2, theta2, w2, *, length: float, A_xx: float, D_xx: float
+            u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float, D_xx: float
         ):
             """
             Expression for bending force at node 2.
@@ -461,7 +476,7 @@ class NonlinearEulerBernoulliBeam:
             )
 
         def _f_6_expr(
-            u1, theta1, w1, u2, theta2, w2, *, length: float, A_xx: float, D_xx: float
+            u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float, D_xx: float
         ):
             """
             Expression for bending moment at node 2.
@@ -513,46 +528,74 @@ class NonlinearEulerBernoulliBeam:
 
         return stiffness_func
 
-    def _calculate_segment_mass(self, i: int) -> np.ndarray:
-        """Calculate mass matrix for segment i."""
-        row = self.parameters.iloc[i]
-        L = row["length"]
-        rhoA = row["density"] * row["cross_area"]
-
-        return np.array(
-            [
-                [140, 0, 0, 70, 0, 0],
-                [0, 156, 22 * L, 0, 54, -13 * L],
-                [0, 22 * L, 4 * L**2, 0, 13 * L, -3 * L**2],
-                [70, 0, 0, 140, 0, 0],
-                [0, 54, 13 * L, 0, 156, -22 * L],
-                [0, -13 * L, -3 * L**2, 0, -22 * L, 4 * L**2],
-            ]
-        ) * (rhoA * L / 420)
-
     def create_stiffness_function(self) -> None:
-        """Create global nonlinear stiffness function."""
+        """Create global nonlinear stiffness function using MapReduce with pre-computed segment functions"""
         n_segments = len(self.parameters)
 
+        # Pre-compute segment stiffness functions
+        self.segment_stiffness_functions = [
+            self._calculate_segment_stiffness_function(i) for i in range(n_segments)
+        ]
+
+        def _map_segment_force(segment_idx_and_state):
+            """Map function to calculate force for a single segment using pre-computed function"""
+            i, x = segment_idx_and_state
+            start_idx = 3 * i
+            segment_x = x[start_idx : start_idx + 6]
+            return self.segment_stiffness_functions[i](segment_x)
+
+        def _reduce_forces(segment_forces: List[np.ndarray]) -> np.ndarray:
+            """
+            Reduce function to combine forces from all segments into nodal forces.
+
+            Args:
+                segment_forces: List of segment force arrays, each of size 6
+                            [f1_axial, f1_rotation, f1_transverse, f2_axial, f2_rotation, f2_transverse]
+                            where f1 and f2 are forces at start and end nodes of segment
+
+            Returns:
+                np.ndarray: Global force vector of size 3*(n_segments+1)
+                Each node has [axial, rotation, transverse] components
+            """
+            n_segments = len(segment_forces)
+            n_nodes = n_segments + 1
+            global_forces = np.zeros(3 * n_nodes)
+
+            # Handle first node (only gets forces from first segment)
+            global_forces[0:3] = segment_forces[0][0:3]
+
+            # Handle internal nodes (get forces from two adjacent segments)
+            for i in range(1, n_segments):
+                # Forces from previous segment (end node)
+                global_forces[3 * i : 3 * (i + 1)] = segment_forces[i - 1][3:6]
+                # Add forces from current segment (start node)
+                global_forces[3 * i : 3 * (i + 1)] += segment_forces[i][0:3]
+
+            # Handle last node (only gets forces from last segment)
+            global_forces[-3:] = segment_forces[-1][3:6]
+
+            return global_forces
+
         def global_stiffness(x: np.ndarray) -> np.ndarray:
-            force = np.zeros_like(x)
+            # Create segment indices and states pairs for mapping
+            segment_inputs = [(i, x) for i in range(n_segments)]
 
-            for i in range(n_segments):
-                segment_func = self._calculate_segment_stiffness_function(i)
-                # Map global states to segment states
-                segment_x = self._get_segment_states(x, i)
-                segment_force = segment_func(segment_x)
-                # Map segment forces back to global
-                self._add_segment_forces(force, segment_force, i)
+            # Only use Pool for parallel force calculations
+            segment_forces: List[np.ndarray]
+            segment_forces = list(map(_map_segment_force, segment_inputs))
 
-            return force
+            # Reduce: Combine forces from all segments into nodal forces
+            # Done outside Pool since it's a sequential operation
+            global_forces = _reduce_forces(segment_forces)
+
+            return global_forces
 
         self.stiffness_func = global_stiffness
 
     def create_mass_matrix(self) -> None:
         """Create global mass matrix."""
         n_segments = len(self.parameters)
-        matrix_size = 6 * (n_segments + 1)
+        matrix_size = 3 * (n_segments + 1)
 
         # Lists for sparse matrix construction
         rows, cols, data = [], [], []
@@ -563,8 +606,8 @@ class NonlinearEulerBernoulliBeam:
             # Add local matrix entries to global matrix
             for local_i in range(6):
                 for local_j in range(6):
-                    global_i = 6 * i + local_i
-                    global_j = 6 * i + local_j
+                    global_i = 3 * i + local_i
+                    global_j = 3 * i + local_j
                     rows.append(global_i)
                     cols.append(global_j)
                     data.append(m_local[local_i, local_j])
@@ -583,6 +626,7 @@ class NonlinearEulerBernoulliBeam:
         Raises:
             RuntimeError: If stiffness function hasn't been created
         """
+
         if self.stiffness_func is None:
             raise RuntimeError("Stiffness function not yet created")
         return self.stiffness_func
@@ -609,23 +653,6 @@ class NonlinearEulerBernoulliBeam:
             float: Total beam length
         """
         return self.parameters["length"].sum()
-
-    def get_segment_stiffness(self, i: int) -> Callable:
-        """
-        Return stiffness function for specified segment.
-
-        Args:
-            i: Segment index
-
-        Returns:
-            Callable: Segment stiffness function
-
-        Raises:
-            IndexError: If segment index is invalid
-        """
-        if i < 0 or i >= len(self.parameters):
-            raise IndexError(f"Segment index {i} out of range")
-        return self._calculate_segment_stiffness_function(i)
 
     def get_segment_mass(self, i: int) -> np.ndarray:
         """
@@ -660,7 +687,7 @@ class NonlinearEulerBernoulliBeam:
         self, conditions: Dict[int, BoundaryConditionType]
     ) -> None:
         """
-        Apply multiple boundary conditions.
+        Apply multiple boundary conditions by reducing system dimensions.
 
         Args:
             conditions: Dictionary mapping node indices to boundary condition types
@@ -701,18 +728,44 @@ class NonlinearEulerBernoulliBeam:
 
             self._boundary_conditions[node_idx] = bc_type
 
-        # Create wrapper around current stiffness function
+        # Get list of DOFs to keep (unconstrained DOFs)
+        all_dofs = set(range(3 * n_nodes))  # Total DOFs = 3 per node
+        unconstrained_dofs = sorted(list(all_dofs - dofs_to_constrain))
+
+        if not unconstrained_dofs:  # All DOFs constrained
+            raise ValueError("Cannot constrain all degrees of freedom")
+
+        # Create wrapper around current stiffness function that handles dimension reduction
         original_stiffness = self.stiffness_func
 
-        def stiffness_with_boundary(x: np.ndarray) -> np.ndarray:
-            forces = original_stiffness(x)
-            # Zero out forces for constrained DOFs
-            for dof in dofs_to_constrain:
-                forces[dof] = 0.0
-            return forces
+        def stiffness_with_boundary(x_reduced: np.ndarray) -> np.ndarray:
+            """
+            Wrapper function that maps between reduced and full state spaces.
+
+            Args:
+                x_reduced: State vector with constrained DOFs removed
+
+            Returns:
+                Reduced force vector with constrained DOFs removed
+            """
+            # Create full state vector with zeros in constrained DOFs
+            x_full = np.zeros(3 * n_nodes)
+            for i, dof in enumerate(unconstrained_dofs):
+                x_full[dof] = x_reduced[i]
+
+            # Calculate forces using original function
+            forces_full = original_stiffness(x_full)
+
+            # Return only unconstrained DOFs
+            return forces_full[unconstrained_dofs]
+
+        # Apply boundary conditions to mass matrix if it exists
+        if self.M is not None:
+            self.M = self.M[unconstrained_dofs, :][:, unconstrained_dofs]
 
         # Update tracking variables
         self._constrained_dofs = dofs_to_constrain
+        self._unconstrained_dofs = unconstrained_dofs  # Store for future use
         self._boundary_conditions_applied = True
         self.stiffness_func = stiffness_with_boundary
 
