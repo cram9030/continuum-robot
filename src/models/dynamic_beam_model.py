@@ -6,8 +6,11 @@ from scipy.sparse.linalg import inv
 import pathlib
 from enum import Enum
 
-from linear_euler_bernoulli_beam import LinearEulerBernoulliBeam, BoundaryConditionType
-from nonlinear_euler_bernoulli_beam import NonlinearEulerBernoulliBeam
+from models.linear_euler_bernoulli_beam import (
+    LinearEulerBernoulliBeam,
+    BoundaryConditionType,
+)
+from models.nonlinear_euler_bernoulli_beam import NonlinearEulerBernoulliBeam
 
 
 class ElementType(Enum):
