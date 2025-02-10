@@ -5,7 +5,7 @@ import tempfile
 import os
 from scipy.integrate import solve_ivp
 
-from dynamic_beam_model import DynamicEulerBernoulliBeam
+from models.dynamic_beam_model import DynamicEulerBernoulliBeam
 
 
 @pytest.fixture
