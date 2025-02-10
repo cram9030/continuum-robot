@@ -4,7 +4,10 @@ import tempfile
 import os
 import pandas as pd
 
-from linear_euler_bernoulli_beam import LinearEulerBernoulliBeam, BoundaryConditionType
+from models.linear_euler_bernoulli_beam import (
+    LinearEulerBernoulliBeam,
+    BoundaryConditionType,
+)
 
 
 @pytest.fixture
