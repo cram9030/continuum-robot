@@ -28,22 +28,27 @@ RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86
 ENV PATH=$CONDA_DIR/bin:$PATH
 
 # Copy environment files
-COPY environment.yml requirements.txt ./
-
-# Create conda environment
-RUN conda env create -f environment.yml && \
-    conda clean -afy
-
-# Make RUN commands use the conda environment
-SHELL ["conda", "run", "-n", "continuum_robot", "/bin/bash", "-c"]
-
-# Install additional pip requirements if needed
-RUN pip install -r requirements.txt
+COPY environment.yml requirements.txt pytest.ini setup.py ./
 
 # Copy source code
 COPY src/ ./src/
 COPY tests/ ./tests/
-COPY pytest.ini ./
+
+RUN conda env create -f environment.yml -v && \
+    conda clean -afy
+
+# Debug: List conda environment packages
+RUN conda run -n continuum_robot conda list
+
+# Install pip requirements separately
+RUN conda run -n continuum_robot pip install -r requirements.txt -v
+
+# Debug: List pip packages
+RUN conda run -n continuum_robot pip list
+
+# Install package in development mode
+COPY setup.py ./
+RUN conda run -n continuum_robot pip install -e . -v
 
 # Set Python path
 ENV PYTHONPATH="/app:${PYTHONPATH}"
