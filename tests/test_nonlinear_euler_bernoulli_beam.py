@@ -4,7 +4,7 @@ import tempfile
 import os
 import pandas as pd
 
-from models.nonlinear_euler_bernoulli_beam import (
+from continuum_robot.models.nonlinear_euler_bernoulli_beam import (
     NonlinearEulerBernoulliBeam,
     BoundaryConditionType,
 )

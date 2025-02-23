@@ -4,11 +4,8 @@ services:
       context: ..
       dockerfile: environment/docker/Dockerfile
     volumes:
-      - ../src:/app/src
-      - ../tests:/app/tests
-    environment:
-      - PYTHONPATH=/app
-    command: conda run --no-capture-output -n continuum_robot pytest tests/
+      - ../tests:/app/tests  # Only mount tests, not source
+    command: conda run --no-capture-output -n test pytest tests/
 
   jupyter:
     build:
