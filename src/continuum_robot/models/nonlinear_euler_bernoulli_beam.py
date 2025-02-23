@@ -5,7 +5,7 @@ from typing import Dict, Set, Union, Callable, List
 import pathlib
 from functools import partial
 
-from models.linear_euler_bernoulli_beam import BoundaryConditionType
+from .linear_euler_bernoulli_beam import BoundaryConditionType
 
 
 class NonlinearEulerBernoulliBeam:

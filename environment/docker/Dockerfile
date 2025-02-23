@@ -1,11 +1,41 @@
-# Base image
-FROM ubuntu:24.04
+# Dockerfile
+FROM ubuntu:24.04 as builder
 
 # Prevent interactive prompts during build
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Set up timezone data
-RUN ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    wget \
+    git \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up conda
+ENV CONDA_DIR /opt/conda
+RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
+    /bin/bash ~/miniconda.sh -b -p $CONDA_DIR && \
+    rm ~/miniconda.sh
+ENV PATH=$CONDA_DIR/bin:$PATH
+
+# Set up working directory
+WORKDIR /app
+
+# Create minimal conda environment for building
+RUN conda create -n test python=3.10 pip -y
+
+# Copy only what's needed for building the wheel
+COPY setup.py ./
+COPY src/ ./src/
+
+# Install build tools and build the wheel
+RUN conda run -n test pip install build wheel && \
+    conda run -n test python -m build --wheel
+
+# Start a fresh image for testing
+FROM ubuntu:24.04 as tester
+
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -15,46 +45,25 @@ RUN apt-get update && apt-get install -y \
     graphviz \
     && rm -rf /var/lib/apt/lists/*
 
-# Set up working directory
-WORKDIR /app
-
-# Install Miniconda
+# Set up conda
 ENV CONDA_DIR /opt/conda
 RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
     /bin/bash ~/miniconda.sh -b -p $CONDA_DIR && \
     rm ~/miniconda.sh
-
-# Add conda to path
 ENV PATH=$CONDA_DIR/bin:$PATH
 
-# Copy environment files
-COPY environment.yml requirements.txt pytest.ini setup.py ./
+WORKDIR /app
 
-# Copy source code
-COPY src/ ./src/
+# Create minimal test environment with just Python
+RUN conda create -n test python=3.10 pip -y
+
+# Copy the wheel and test files from builder
+COPY --from=builder /app/dist/*.whl ./
+COPY pytest.ini ./
 COPY tests/ ./tests/
 
-RUN conda env create -f environment.yml -v && \
-    conda clean -afy
+# Install the wheel and test dependencies in the minimal environment
+RUN conda run -n test pip install *.whl pytest pytest-cov
 
-# Debug: List conda environment packages
-RUN conda run -n continuum_robot conda list
-
-# Install pip requirements separately
-RUN conda run -n continuum_robot pip install -r requirements.txt -v
-
-# Debug: List pip packages
-RUN conda run -n continuum_robot pip list
-
-# Install package in development mode
-COPY setup.py ./
-RUN conda run -n continuum_robot pip install -e . -v
-
-# Set Python path
-ENV PYTHONPATH="/app:${PYTHONPATH}"
-
-# Activate conda environment by default
-RUN echo "conda activate continuum_robot" >> ~/.bashrc
-
-# Default command to run tests using the conda environment
-CMD ["conda", "run", "--no-capture-output", "-n", "continuum_robot", "pytest", "tests/"]
+# Run tests by default using the minimal conda environment
+CMD ["conda", "run", "--no-capture-output", "-n", "test", "pytest", "tests/"]
