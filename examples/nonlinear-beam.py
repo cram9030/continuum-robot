@@ -5,7 +5,7 @@ from matplotlib.animation import FuncAnimation
 import tempfile
 import os
 
-from models.dynamic_beam_model import DynamicEulerBernoulliBeam
+from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
 
 # Simulation parameters
 T_FINAL = 0.1  # seconds
