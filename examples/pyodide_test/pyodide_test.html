@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Continuum Robot Pyodide Tests</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
+    <style>
+        .output {
+            font-family: monospace;
+            white-space: pre-wrap;
+            padding: 10px;
+            border: 1px solid #ccc;
+            margin: 10px 0;
+        }
+        .error { color: red; }
+        .success { color: green; }
+    </style>
+</head>
+<body>
+    <h1>Continuum Robot Package Tests</h1>
+    <div id="loading">Loading Pyodide...</div>
+    <div id="output" class="output"></div>
+
+    <script>
+        async function main() {
+            let pyodide = await loadPyodide();
+            document.getElementById("loading").textContent = "Loading packages...";
+
+            // Load required packages
+            await pyodide.loadPackage(["numpy", "scipy", "pandas", "micropip"]);
+
+            document.getElementById("loading").textContent = "Loading wheel...";
+
+            // Install local wheel file
+            try {
+                console.log("Installing wheel...");
+                await pyodide.runPythonAsync(`
+                    from pyodide.http import pyfetch
+                    response = await pyfetch('./continuum_robot-0.0.1a1-py3-none-any.whl')
+                    await response.unpack_archive() # by default, unpacks to the current dir
+                `);
+                await pyodide.runPythonAsync(`
+                    import sys
+                    import micropip
+
+                    # Show where Python is looking for modules
+                    print("Python path:", sys.path)
+
+                    # Verbose installation
+                    try:
+                        await micropip.install('./continuum_robot-0.0.1a1-py3-none-any.whl', verbose=True)
+                        print("Wheel installed successfully")
+                    except Exception as e:
+                        print(f"Wheel installation error: {e}")
+                        import traceback
+                        traceback.print_exc()
+                `);
+
+                const importTest = await pyodide.runPythonAsync(`
+                    try:
+                        import continuum_robot
+                        print("Package structure:", dir(continuum_robot))
+                        try:
+                            import continuum_robot.models
+                            print("Models structure:", dir(continuum_robot.models))
+                        except ImportError as e:
+                            print(f"Models import error: {e}")
+
+                        "Import test complete"
+                    except Exception as e:
+                        import traceback
+                        traceback.print_exc()
+                        raise e
+                `);
+                console.log(importTest);
+
+                document.getElementById("loading").textContent = "Running tests...";
+                    // Run the tests
+                    let output = await pyodide.runPythonAsync(`
+    import numpy as np
+    from continuum_robot.models import LinearEulerBernoulliBeam
+    import pandas as pd
+
+    def run_basic_tests():
+        results = []
+
+        # Test 1: Create beam parameters
+        try:
+            data = {
+                'length': [0.25] * 4,
+                'elastic_modulus': [75e9] * 4,
+                'moment_inertia': [4.91e-10] * 4,
+                'density': [6450] * 4,
+                'cross_area': [7.85e-5] * 4
+            }
+            df = pd.DataFrame(data)
+            results.append(("✓ Created parameter DataFrame", True))
+        except Exception as e:
+            results.append((f"✗ Parameter creation failed: {str(e)}", False))
+
+        # Test 2: Initialize beam
+        try:
+            beam = LinearEulerBernoulliBeam(df, 0.01)
+            results.append(("✓ Beam initialized", True))
+        except Exception as e:
+            results.append((f"✗ Beam initialization failed: {str(e)}", False))
+
+        # Test 3: Create matrices
+        try:
+            beam.create_stiffness_matrix()
+            beam.create_mass_matrix()
+            results.append(("✓ Matrices created", True))
+        except Exception as e:
+            results.append((f"✗ Matrix creation failed: {str(e)}", False))
+
+        # Test 4: Get matrices
+        try:
+            K = beam.get_stiffness_matrix()
+            M = beam.get_mass_matrix()
+            if isinstance(K, np.ndarray) and isinstance(M, np.ndarray):
+                results.append(("✓ Retrieved matrices", True))
+            else:
+                results.append(("✗ Matrix retrieval returned wrong type", False))
+        except Exception as e:
+            results.append((f"✗ Matrix retrieval failed: {str(e)}", False))
+
+        return results
+
+    # Run tests and format output
+    results = run_basic_tests()
+    output = []
+    all_passed = True
+
+    for msg, passed in results:
+        if passed:
+            output.append(f"\\033[92m{msg}\\033[0m")  # Green
+        else:
+            output.append(f"\\033[91m{msg}\\033[0m")  # Red
+            all_passed = False
+
+    if all_passed:
+        output.append("\\n\\033[92mAll tests passed!\\033[0m")
+    else:
+        output.append("\\n\\033[91mSome tests failed!\\033[0m")
+
+    "\\n".join(output)
+                    `);
+
+                    // Display results with ANSI color codes converted to HTML
+                    const colorized = output.replace(/\033\[92m/g, '<span class="success">')
+                                        .replace(/\033\[91m/g, '<span class="error">')
+                                        .replace(/\033\[0m/g, '</span>');
+                    document.getElementById("output").innerHTML = colorized;
+                    document.getElementById("loading").textContent = "Tests complete!";
+
+            } catch (error) {
+                document.getElementById("output").innerHTML = `<span class="error">Error running tests: ${error}</span>`;
+                document.getElementById("loading").textContent = "Tests failed!";
+            }
+        }
+        main();
+    </script>
+</body>
+</html>
