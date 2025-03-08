@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.integrate import solve_ivp
-from models.dynamic_beam_model import DynamicEulerBernoulliBeam
+from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
 import tempfile
 import json
 
