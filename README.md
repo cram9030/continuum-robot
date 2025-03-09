@@ -125,6 +125,12 @@ pytest tests/
 pytest --cov=src tests/
 ```
 
+when developing new features remember to reinstall the package if the imports have changed
+
+```
+pip install -e .
+```
+
 ## 🏃 Running Examples
 
 The project includes example simulations to demonstrate functionality:
