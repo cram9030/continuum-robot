@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Continuum Robot Simulation</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.1.0"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .simulation-area {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .canvas-container {
+            flex: 1;
+            min-width: 300px;
+            border: 1px solid #ccc;
+            position: relative;
+            height: 400px;
+        }
+        .chart-container {
+            flex: 1;
+            min-width: 300px;
+            border: 1px solid #ccc;
+            height: 400px;
+        }
+        #beamCanvas {
+            background-color: #f9f9f9;
+            width: 100%;
+            height: 100%;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            align-items: center;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 400px;
+        }
+        .spinner {
+            border: 6px solid #f3f3f3;
+            border-top: 6px solid #3498db;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 2s linear infinite;
+            margin-bottom: 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .output {
+            font-family: monospace;
+            white-space: pre-wrap;
+            padding: 10px;
+            border: 1px solid #ccc;
+            margin: 10px 0;
+            max-height: 200px;
+            overflow: auto;
+        }
+        .error { color: red; }
+        .success { color: green; }
+        /* Speed control styles */
+        .speed-control {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .speed-control label {
+            font-size: 14px;
+        }
+        .speed-control input {
+            width: 60px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Continuum Robot Simulation</h1>
+
+    <div class="container">
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <div id="loadingText">Loading Pyodide and packages...</div>
+        </div>
+
+        <div id="simulationContainer" style="display: none;">
+            <div class="simulation-area">
+                <div class="canvas-container">
+                    <canvas id="beamCanvas" height="400"></canvas>
+                </div>
+                <div class="chart-container">
+                    <canvas id="tipDisplacementChart"></canvas>
+                </div>
+            </div>
+
+            <div class="controls">
+                <button id="playPauseBtn">Play</button>
+                <button id="resetBtn">Reset</button>
+                <div class="speed-control">
+                    <label for="speedInput">Speed:</label>
+                    <input type="number" id="speedInput" min="0.1" max="5.0" step="0.1" value="1.0">
+                    <span>×</span>
+                </div>
+                <input type="range" id="timeSlider" min="0" max="100" value="0" style="flex-grow: 1;">
+                <span id="timeDisplay">Time: 0.00s</span>
+            </div>
+        </div>
+
+        <div id="output" class="output"></div>
+    </div>
+
+    <script>
+        // Animation variables
+        let animationData = null;
+        let animationFrameId = null;
+        let currentFrameIndex = 0;
+        let isPlaying = false;
+        let tipDisplacementChart = null;
+        let playbackSpeed = 1.0;
+        let lastFrameTime = 0;
+        const frameDelay = 30; // Base delay between frames in ms
+
+        // References to DOM elements
+        const beamCanvas = document.getElementById('beamCanvas');
+        const ctx = beamCanvas.getContext('2d');
+        const playPauseBtn = document.getElementById('playPauseBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const timeSlider = document.getElementById('timeSlider');
+        const timeDisplay = document.getElementById('timeDisplay');
+        const loadingElement = document.getElementById('loading');
+        const simulationContainer = document.getElementById('simulationContainer');
+        const outputElement = document.getElementById('output');
+        const speedInput = document.getElementById('speedInput');
+
+        // Function to load a Python file
+        async function loadPythonFile(url) {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Failed to load ${url}: ${response.statusText}`);
+            }
+            return await response.text();
+        }
+
+        // Function to log messages to the output area
+        function log(message, isError = false) {
+            const msgElement = document.createElement('div');
+            msgElement.textContent = message;
+            if (isError) msgElement.classList.add('error');
+            outputElement.appendChild(msgElement);
+            outputElement.scrollTop = outputElement.scrollHeight;
+        }
+
+        // Initialize Chart.js for tip displacement
+        function initTipDisplacementChart(times, tipDisplacement) {
+            const ctx = document.getElementById('tipDisplacementChart').getContext('2d');
+            const tipColor = 'rgb(76, 192, 192)'; // Teal color for tip displacement
+
+            tipDisplacementChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: times,  // Use actual time values for x-axis
+                    datasets: [{
+                        label: 'Tip Displacement',
+                        data: tipDisplacement.map((y, i) => ({x: times[i], y: y})),  // Use x/y format for data points
+                        borderColor: tipColor,
+                        backgroundColor: tipColor,  // Fill the legend box with the same color
+                        tension: 0.1,
+                        pointRadius: 0,
+                        fill: false
+                    }]
+                },
+                options: {
+                    animation: false,
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'linear',  // Use linear scale for x-axis with actual time values
+                            title: {
+                                display: true,
+                                text: 'Time (s)'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Displacement'
+                            }
+                        }
+                    },
+                    plugins: {
+                        annotation: {
+                            annotations: {}
+                        },
+                        legend: {
+                            labels: {
+                                // Configure legend items
+                                generateLabels: function(chart) {
+                                    // Get default legend items
+                                    const defaultItems = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+
+                                    // Add custom legend item for current time marker
+                                    defaultItems.push({
+                                        text: 'Current Time',
+                                        fillStyle: 'red',
+                                        strokeStyle: 'red',
+                                        lineWidth: 0,
+                                        hidden: false,
+                                        index: 1
+                                    });
+
+                                    return defaultItems;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Update the current time marker on the chart
+        function updateTimeMarker(index) {
+            if (!tipDisplacementChart) return;
+
+            // Get current time and displacement
+            const time = animationData.times[index];
+            const displacement = animationData.tip_displacement[index];
+
+            // Update annotation for current time point
+            tipDisplacementChart.options.plugins.annotation.annotations = {
+                timeMarker: {
+                    type: 'point',
+                    xValue: time,  // Use actual time value
+                    yValue: displacement,
+                    backgroundColor: 'red',
+                    radius: 5
+                }
+            };
+
+            tipDisplacementChart.update();
+        }
+
+        // Draw the beam at a specific time step
+        function drawBeam(frameIndex) {
+            if (!animationData) return;
+
+            const canvas = beamCanvas;
+            const ctx = canvas.getContext('2d');
+            const canvasWidth = canvas.clientWidth;
+            const canvasHeight = canvas.clientHeight;
+
+            // Set canvas resolution to match display size
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+            // Get beam coordinates for current frame
+            const x = animationData.x_coords[frameIndex];
+            const y = animationData.y_coords[frameIndex];
+
+            // Find min/max values for scaling
+            const maxX = Math.max(...animationData.x_coords.flat());
+            const maxAbsY = Math.max(
+                Math.abs(Math.min(...animationData.y_coords.flat())),
+                Math.abs(Math.max(...animationData.y_coords.flat()))
+            );
+
+            // Add padding
+            const padding = 50;
+
+            // Calculate scale factors
+            const scaleX = (canvasWidth - 2 * padding) / maxX;
+            const scaleY = (canvasHeight - 2 * padding) / (2 * maxAbsY || 1); // Avoid division by zero
+
+            // Draw beam
+            ctx.beginPath();
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#3498db';
+
+            for (let i = 0; i < x.length; i++) {
+                // Transform coordinates to canvas space
+                const canvasX = padding + x[i] * scaleX;
+                const canvasY = canvasHeight / 2 - y[i] * scaleY; // Center and flip y (canvas y is top-down)
+
+                if (i === 0) {
+                    ctx.moveTo(canvasX, canvasY);
+                } else {
+                    ctx.lineTo(canvasX, canvasY);
+                }
+            }
+            ctx.stroke();
+
+            // Draw points at each segment
+            for (let i = 0; i < x.length; i++) {
+                const canvasX = padding + x[i] * scaleX;
+                const canvasY = canvasHeight / 2 - y[i] * scaleY;
+
+                if (i === 0) {
+                    // Red for fixed end
+                    ctx.fillStyle = '#e74c3c';
+                    ctx.beginPath();
+                    ctx.arc(canvasX, canvasY, 6, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (i === x.length - 1) {
+                    // Tip point - match the color from the chart
+                    ctx.fillStyle = 'rgb(76, 192, 192)';
+                    ctx.beginPath();
+                    ctx.arc(canvasX, canvasY, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                } else {
+                    // Green for intermediate points
+                    ctx.fillStyle = '#2ecc71';
+                    ctx.beginPath();
+                    ctx.arc(canvasX, canvasY, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // Update time display
+            timeDisplay.textContent = `Time: ${animationData.times[frameIndex].toFixed(2)}s`;
+            timeSlider.value = frameIndex;
+
+            // Update chart marker
+            updateTimeMarker(frameIndex);
+        }
+
+        // Animation loop with variable speed control
+        function animate(timestamp) {
+            if (!isPlaying) return;
+
+            // Calculate if we need to advance the frame based on playback speed
+            const elapsed = timestamp - lastFrameTime;
+            const targetFrameTime = frameDelay / playbackSpeed;
+
+            if (elapsed >= targetFrameTime) {
+                lastFrameTime = timestamp;
+
+                drawBeam(currentFrameIndex);
+
+                // Move to next frame
+                currentFrameIndex++;
+                if (currentFrameIndex >= animationData.times.length) {
+                    currentFrameIndex = 0; // Loop the animation
+                }
+            }
+
+            // Schedule next frame
+            animationFrameId = requestAnimationFrame(animate);
+        }
+
+        // Event listeners for controls
+        playPauseBtn.addEventListener('click', () => {
+            isPlaying = !isPlaying;
+            playPauseBtn.textContent = isPlaying ? 'Pause' : 'Play';
+
+            if (isPlaying) {
+                lastFrameTime = performance.now();
+                animate(lastFrameTime);
+            } else {
+                cancelAnimationFrame(animationFrameId);
+            }
+        });
+
+        resetBtn.addEventListener('click', () => {
+            currentFrameIndex = 0;
+            timeSlider.value = 0;
+            drawBeam(currentFrameIndex);
+
+            if (isPlaying) {
+                cancelAnimationFrame(animationFrameId);
+                lastFrameTime = performance.now();
+                animate(lastFrameTime);
+            }
+        });
+
+        timeSlider.addEventListener('input', () => {
+            currentFrameIndex = parseInt(timeSlider.value);
+            drawBeam(currentFrameIndex);
+
+            if (isPlaying) {
+                isPlaying = false;
+                playPauseBtn.textContent = 'Play';
+                cancelAnimationFrame(animationFrameId);
+            }
+        });
+
+        speedInput.addEventListener('change', () => {
+            const newSpeed = parseFloat(speedInput.value);
+            if (!isNaN(newSpeed) && newSpeed >= 0.1 && newSpeed <= 5.0) {
+                playbackSpeed = newSpeed;
+            } else {
+                // Reset to default if invalid
+                speedInput.value = playbackSpeed.toFixed(1);
+            }
+        });
+
+        // Resize canvas when window size changes
+        window.addEventListener('resize', () => {
+            if (animationData) {
+                drawBeam(currentFrameIndex);
+            }
+        });
+
+        // Main function to initialize Pyodide and run the simulation
+        async function main() {
+            try {
+                // Load Pyodide
+                let pyodide = await loadPyodide();
+                document.getElementById("loadingText").textContent = "Loading packages...";
+
+                // Load required packages
+                await pyodide.loadPackage(["numpy", "scipy", "pandas", "micropip"]);
+                document.getElementById("loadingText").textContent = "Setting up environment...";
+
+                // Install local wheel file for continuum_robot package
+                log("Installing continuum_robot package...");
+                await pyodide.runPythonAsync(`
+                    import sys
+                    import micropip
+                    try:
+                        from pyodide.http import pyfetch
+                        response = await pyfetch('./continuum_robot-0.0.1a1-py3-none-any.whl')
+                        await response.unpack_archive()
+                        await micropip.install('./continuum_robot-0.0.1a1-py3-none-any.whl')
+                        print("Package installed successfully")
+                    except Exception as e:
+                        print(f"Package installation error: {e}")
+                        import traceback
+                        traceback.print_exc()
+                `);
+
+                // Load the simulation code from external file
+                document.getElementById("loadingText").textContent = "Loading simulation code...";
+                log("Loading Python code from external file...");
+
+                try {
+                    const pythonCode = await loadPythonFile('pyodide_example.py');
+                    log("Python code loaded successfully");
+
+                    // Run the loaded Python code
+                    document.getElementById("loadingText").textContent = "Executing simulation...";
+
+                    // Execute the loaded Python code
+                    await pyodide.runPythonAsync(pythonCode);
+
+                    // Run the simulation function
+                    log("Running simulation...");
+                    const results = await pyodide.runPythonAsync(`
+                        # Run the simulation and return results
+                        results = run_simulation()
+                        results
+                    `);
+
+                    log("Simulation completed successfully!");
+
+                    // Parse the JSON result
+                    animationData = JSON.parse(results);
+
+                    // Prepare the slider
+                    timeSlider.max = animationData.times.length - 1;
+
+                    // Initialize the chart
+                    initTipDisplacementChart(animationData.times, animationData.tip_displacement);
+
+                    // Draw initial beam position
+                    drawBeam(0);
+
+                    // Show simulation controls, hide loading
+                    loadingElement.style.display = 'none';
+                    simulationContainer.style.display = 'block';
+
+                } catch (fileError) {
+                    log(`Error loading or running Python file: ${fileError.message}`, true);
+                    console.error("File error:", fileError);
+                    document.getElementById("loadingText").textContent = `Error: ${fileError.message}`;
+                }
+
+            } catch (error) {
+                log(`Error: ${error.message}`, true);
+                console.error("Full error:", error);
+                loadingElement.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        // Start the application
+        main();
+    </script>
+</body>
+</html>
