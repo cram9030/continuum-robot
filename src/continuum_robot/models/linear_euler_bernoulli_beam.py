@@ -71,6 +71,8 @@ class LinearEulerBernoulliBeam:
 
         # Validate parameters
         self.validate_parameters(self.parameters)
+        # Initialize DOF mappings
+        self._initialize_dof_mapping()
 
         self._boundary_conditions: Dict[int, BoundaryConditionType] = {}
         self._boundary_conditions_applied = False
@@ -161,6 +163,95 @@ class LinearEulerBernoulliBeam:
 
         except FileNotFoundError:
             raise FileNotFoundError(f"Parameter file {filename} not found")
+
+    def _initialize_dof_mapping(self):
+        """
+        Initialize the mapping between DOF indices and (parameter, node) pairs.
+
+        For linear model:
+        - Each node has 2 DOFs: w (displacement) and phi (rotation)
+        - DOF indices are organized as [w1, phi1, w2, phi2, ..., wn, phin]
+        """
+        n_nodes = len(self.parameters) + 1
+        self.dof_to_node_param = {}  # Maps DOF index to (parameter, node) pair
+        self.node_param_to_dof = {}  # Maps (parameter, node) pair to DOF index
+
+        for node in range(n_nodes):
+            # Displacement (w) at node
+            self.dof_to_node_param[2 * node] = ("w", node)
+            self.node_param_to_dof[("w", node)] = 2 * node
+
+            # Rotation (phi) at node
+            self.dof_to_node_param[2 * node + 1] = ("phi", node)
+            self.node_param_to_dof[("phi", node)] = 2 * node + 1
+
+        # Store original mappings for when boundary conditions are cleared
+        self._original_dof_to_node_param = self.dof_to_node_param.copy()
+        self._original_node_param_to_dof = self.node_param_to_dof.copy()
+
+    def _update_dof_mapping(self):
+        """
+        Update the DOF mappings after boundary conditions are applied.
+        Must be called after self._constrained_dofs is updated.
+        """
+        if not self._boundary_conditions_applied:
+            return
+
+        # Create new mappings
+        new_dof_to_node_param = {}
+        new_node_param_to_dof = {}
+
+        # Get all unconstrained DOFs
+        unconstrained_dofs = [
+            dof
+            for dof in sorted(self._original_dof_to_node_param.keys())
+            if dof not in self._constrained_dofs
+        ]
+
+        # Create new mapping with sequential indices
+        for new_idx, old_idx in enumerate(unconstrained_dofs):
+            param_node = self._original_dof_to_node_param[old_idx]
+            new_dof_to_node_param[new_idx] = param_node
+            new_node_param_to_dof[param_node] = new_idx
+
+        # Update the mappings
+        self.dof_to_node_param = new_dof_to_node_param
+        self.node_param_to_dof = new_node_param_to_dof
+
+    def get_dof_to_node_param(self, dof_idx):
+        """
+        Get the (parameter, node) pair for a given DOF index.
+
+        Args:
+            dof_idx: DOF index in the current state vector
+
+        Returns:
+            Tuple (parameter, node) where parameter is 'w' or 'phi'
+
+        Raises:
+            KeyError: If the DOF index is invalid
+        """
+        if dof_idx not in self.dof_to_node_param:
+            raise KeyError(f"Invalid DOF index: {dof_idx}")
+        return self.dof_to_node_param[dof_idx]
+
+    def get_dof_index(self, node_idx, param):
+        """
+        Get the DOF index for a given node and parameter.
+
+        Args:
+            node_idx: Node index
+            param: Parameter type ('w' or 'phi')
+
+        Returns:
+            DOF index in the current state vector
+
+        Raises:
+            KeyError: If the node or parameter is invalid
+        """
+        if (param, node_idx) not in self.node_param_to_dof:
+            raise KeyError(f"Invalid node/parameter combination: ({node_idx}, {param})")
+        return self.node_param_to_dof[(param, node_idx)]
 
     def create_stiffness_matrix(self) -> None:
         """
@@ -429,6 +520,9 @@ class LinearEulerBernoulliBeam:
         self._constrained_dofs = dofs_to_constrain
         self._boundary_conditions_applied = True
 
+        # After boundary conditions are applied, update the DOF mapping
+        self._update_dof_mapping()
+
     def clear_boundary_conditions(self) -> None:
         """
         Clear all boundary conditions and recreate original matrices.
@@ -450,6 +544,10 @@ class LinearEulerBernoulliBeam:
         self._boundary_conditions.clear()
         self._constrained_dofs.clear()
         self._boundary_conditions_applied = False
+
+        # Restore original DOF mappings
+        self.dof_to_node_param = self._original_dof_to_node_param.copy()
+        self.node_param_to_dof = self._original_node_param_to_dof.copy()
 
     def get_boundary_conditions(self) -> Dict[int, BoundaryConditionType]:
         """

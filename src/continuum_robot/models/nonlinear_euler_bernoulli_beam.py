@@ -66,6 +66,9 @@ class NonlinearEulerBernoulliBeam:
         # Validate parameters
         self.validate_parameters(self.parameters)
 
+        # Initialize DOF mappings
+        self._initialize_dof_mapping()
+
     def validate_parameters(self, parameters: pd.DataFrame) -> None:
         """
         Validate beam parameters from DataFrame.
@@ -154,6 +157,99 @@ class NonlinearEulerBernoulliBeam:
         except FileNotFoundError:
             raise FileNotFoundError(f"Parameter file {filename} not found")
 
+    def _initialize_dof_mapping(self):
+        """
+        Initialize the mapping between DOF indices and (parameter, node) pairs.
+
+        For nonlinear model:
+        - Each node has 3 DOFs: u (axial), w (transverse), and phi (rotation)
+        - DOF indices are organized as [u1, w1, phi1, u2, w2, phi2, ..., un, wn, phin]
+        """
+        n_nodes = len(self.parameters) + 1
+        self.dof_to_node_param = {}  # Maps DOF index to (parameter, node) pair
+        self.node_param_to_dof = {}  # Maps (parameter, node) pair to DOF index
+
+        for node in range(n_nodes):
+            # Axial displacement (u) at node
+            self.dof_to_node_param[3 * node] = ("u", node)
+            self.node_param_to_dof[("u", node)] = 3 * node
+
+            # Transverse displacement (w) at node
+            self.dof_to_node_param[3 * node + 1] = ("w", node)
+            self.node_param_to_dof[("w", node)] = 3 * node + 1
+
+            # Rotation (phi) at node
+            self.dof_to_node_param[3 * node + 2] = ("phi", node)
+            self.node_param_to_dof[("phi", node)] = 3 * node + 2
+
+        # Store original mappings for when boundary conditions are cleared
+        self._original_dof_to_node_param = self.dof_to_node_param.copy()
+        self._original_node_param_to_dof = self.node_param_to_dof.copy()
+
+    def _update_dof_mapping(self):
+        """
+        Update the DOF mappings after boundary conditions are applied.
+        Must be called after self._constrained_dofs is updated.
+        """
+        if not self._boundary_conditions_applied:
+            return
+
+        # Create new mappings
+        new_dof_to_node_param = {}
+        new_node_param_to_dof = {}
+
+        # Get all unconstrained DOFs
+        unconstrained_dofs = [
+            dof
+            for dof in sorted(self._original_dof_to_node_param.keys())
+            if dof not in self._constrained_dofs
+        ]
+
+        # Create new mapping with sequential indices
+        for new_idx, old_idx in enumerate(unconstrained_dofs):
+            param_node = self._original_dof_to_node_param[old_idx]
+            new_dof_to_node_param[new_idx] = param_node
+            new_node_param_to_dof[param_node] = new_idx
+
+        # Update the mappings
+        self.dof_to_node_param = new_dof_to_node_param
+        self.node_param_to_dof = new_node_param_to_dof
+
+    def get_dof_to_node_param(self, dof_idx):
+        """
+        Get the (parameter, node) pair for a given DOF index.
+
+        Args:
+            dof_idx: DOF index in the current state vector
+
+        Returns:
+            Tuple (parameter, node) where parameter is 'u', 'w', or 'phi'
+
+        Raises:
+            KeyError: If the DOF index is invalid
+        """
+        if dof_idx not in self.dof_to_node_param:
+            raise KeyError(f"Invalid DOF index: {dof_idx}")
+        return self.dof_to_node_param[dof_idx]
+
+    def get_dof_index(self, node_idx, param):
+        """
+        Get the DOF index for a given node and parameter.
+
+        Args:
+            node_idx: Node index
+            param: Parameter type ('u', 'w', or 'phi')
+
+        Returns:
+            DOF index in the current state vector
+
+        Raises:
+            KeyError: If the node or parameter is invalid
+        """
+        if (param, node_idx) not in self.node_param_to_dof:
+            raise KeyError(f"Invalid node/parameter combination: ({node_idx}, {param})")
+        return self.node_param_to_dof[(param, node_idx)]
+
     def _calculate_segment_mass(self, i: int) -> np.ndarray:
         """Calculate mass matrix for segment i."""
         row = self.parameters.iloc[i]
@@ -217,11 +313,11 @@ class NonlinearEulerBernoulliBeam:
 
             Parameters:
             u1 (float): Displacement at node 1.
-            theta1 (float): Rotation at node 1.
             w1 (float): Transverse displacement at node 1.
+            theta1 (float): Rotation at node 1.
             u2 (float): Displacement at node 2.
-            theta2 (float): Rotation at node 2.
             w2 (float): Transverse displacement at node 2.
+            theta2 (float): Rotation at node 2.
             length (float): Length of the beam element.
             A_xx (float): Elastic modulus times cross-sectional area (EA).
 
@@ -268,11 +364,11 @@ class NonlinearEulerBernoulliBeam:
 
             Parameters:
             u1 (float): Displacement at node 1.
-            theta1 (float): Rotation at node 1.
             w1 (float): Transverse displacement at node 1.
+            theta1 (float): Rotation at node 1.
             u2 (float): Displacement at node 2.
-            theta2 (float): Rotation at node 2.
             w2 (float): Transverse displacement at node 2.
+            theta2 (float): Rotation at node 2.
             length (float): Length of the beam element.
             A_xx (float): Elastic modulus times cross-sectional area (EA).
 
@@ -320,11 +416,11 @@ class NonlinearEulerBernoulliBeam:
 
             Parameters:
             u1 (float): Displacement at node 1.
-            theta1 (float): Rotation at node 1.
             w1 (float): Transverse displacement at node 1.
+            theta1 (float): Rotation at node 1.
             u2 (float): Displacement at node 2.
-            theta2 (float): Rotation at node 2.
             w2 (float): Transverse displacement at node 2.
+            theta2 (float): Rotation at node 2.
             length (float): Length of the beam element.
             A_xx (float): Elastic modulus times cross-sectional area (EA).
 
@@ -376,11 +472,11 @@ class NonlinearEulerBernoulliBeam:
 
             Parameters:
             u1 (float): Displacement at node 1.
-            theta1 (float): Rotation at node 1.
             w1 (float): Transverse displacement at node 1.
+            theta1 (float): Rotation at node 1.
             u2 (float): Displacement at node 2.
-            theta2 (float): Rotation at node 2.
             w2 (float): Transverse displacement at node 2.
+            theta2 (float): Rotation at node 2.
             length (float): Length of the beam element.
             A_xx (float): Elastic modulus times cross-sectional area (EA).
 
@@ -427,11 +523,11 @@ class NonlinearEulerBernoulliBeam:
 
             Parameters:
             u1 (float): Displacement at node 1.
-            theta1 (float): Rotation at node 1.
             w1 (float): Transverse displacement at node 1.
+            theta1 (float): Rotation at node 1.
             u2 (float): Displacement at node 2.
-            theta2 (float): Rotation at node 2.
             w2 (float): Transverse displacement at node 2.
+            theta2 (float): Rotation at node 2.
             length (float): Length of the beam element.
             A_xx (float): Elastic modulus times cross-sectional area (EA).
 
@@ -483,11 +579,11 @@ class NonlinearEulerBernoulliBeam:
 
             Parameters:
             u1 (float): Displacement at node 1.
-            theta1 (float): Rotation at node 1.
             w1 (float): Transverse displacement at node 1.
+            theta1 (float): Rotation at node 1.
             u2 (float): Displacement at node 2.
-            theta2 (float): Rotation at node 2.
             w2 (float): Transverse displacement at node 2.
+            theta2 (float): Rotation at node 2.
             length (float): Length of the beam element.
             A_xx (float): Elastic modulus times cross-sectional area (EA).
 
@@ -712,17 +808,17 @@ class NonlinearEulerBernoulliBeam:
 
         # Process all boundary conditions
         for node_idx, bc_type in conditions.items():
-            base_idx = node_idx * 3  # Each node has 3 components [u, θ, w]
+            base_idx = node_idx * 3  # Each node has 3 components [u, w, θ]
 
             if bc_type == BoundaryConditionType.FIXED:
                 # Constrain all DOFs for node
                 dofs_to_constrain.add(base_idx)  # u (axial displacement)
-                dofs_to_constrain.add(base_idx + 1)  # θ (rotation)
-                dofs_to_constrain.add(base_idx + 2)  # w (transverse displacement)
+                dofs_to_constrain.add(base_idx + 1)  # w (transverse displacement)
+                dofs_to_constrain.add(base_idx + 2)  # θ (rotation)
             elif bc_type == BoundaryConditionType.PINNED:
                 # Constrain only displacements
                 dofs_to_constrain.add(base_idx)  # u (axial displacement)
-                dofs_to_constrain.add(base_idx + 2)  # w (transverse displacement)
+                dofs_to_constrain.add(base_idx + 1)  # w (transverse displacement)
             else:
                 raise ValueError(f"Unsupported boundary condition type: {bc_type}")
 
@@ -769,6 +865,9 @@ class NonlinearEulerBernoulliBeam:
         self._boundary_conditions_applied = True
         self.stiffness_func = stiffness_with_boundary
 
+        # After boundary conditions are applied, update the DOF mapping
+        self._update_dof_mapping()
+
     def clear_boundary_conditions(self) -> None:
         """Clear all boundary conditions and recreate original stiffness function."""
         if self.stiffness_func is None:
@@ -783,6 +882,10 @@ class NonlinearEulerBernoulliBeam:
         self._boundary_conditions.clear()
         self._constrained_dofs.clear()
         self._boundary_conditions_applied = False
+
+        # Restore original DOF mappings
+        self.dof_to_node_param = self._original_dof_to_node_param.copy()
+        self.node_param_to_dof = self._original_node_param_to_dof.copy()
 
     def get_boundary_conditions(self) -> Dict[int, BoundaryConditionType]:
         """Get currently applied boundary conditions."""
