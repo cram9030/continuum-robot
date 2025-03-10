@@ -424,13 +424,11 @@ def test_state_mapping_initialization(beam_files):
 
     # Check mappings for positions and velocities
     for i in range(8):  # 8 position states
-        param, node, is_velocity = linear_beam.state_to_node_param[i]
-        assert not is_velocity  # Position part
+        param, node = linear_beam.state_to_node_param[i]
         assert param in ["w", "phi"]  # Either displacement or rotation
 
     for i in range(8, 16):  # 8 velocity states
-        param, node, is_velocity = linear_beam.state_to_node_param[i]
-        assert is_velocity  # Velocity part
+        param, node = linear_beam.state_to_node_param[i]
         assert param in ["dw_dt", "dphi_dt"]  # Velocity of displacement or rotation
 
     # Test nonlinear beam state mapping
@@ -445,13 +443,11 @@ def test_state_mapping_initialization(beam_files):
 
     # Check mappings for positions and velocities
     for i in range(12):  # 12 position states
-        param, node, is_velocity = nonlinear_beam.state_to_node_param[i]
-        assert not is_velocity  # Position part
+        param, node = nonlinear_beam.state_to_node_param[i]
         assert param in ["u", "w", "phi"]  # Axial, transverse, or rotation
 
     for i in range(12, 24):  # 12 velocity states
-        param, node, is_velocity = nonlinear_beam.state_to_node_param[i]
-        assert is_velocity  # Velocity part
+        param, node = nonlinear_beam.state_to_node_param[i]
         assert param in ["du_dt", "dw_dt", "dphi_dt"]  # Velocity components
 
 
@@ -462,29 +458,30 @@ def test_state_mapping_accessors(beam_files):
 
     # Get some example mappings
     idx_example = 2  # Some position index
-    param, node, is_velocity = beam.get_state_to_node_param(idx_example)
+    param, node = beam.get_state_to_node_param(idx_example)
 
     # Test reverse mapping
-    assert beam.get_state_index(node, param, is_velocity) == idx_example
+    assert beam.get_state_index(node, param) == idx_example
 
     # Test velocity parameter mapping
     vel_idx = idx_example + len(beam.state_to_node_param) // 2
-    vel_param, vel_node, vel_is_velocity = beam.get_state_to_node_param(vel_idx)
+    vel_param, vel_node = beam.get_state_to_node_param(vel_idx)
 
-    assert vel_is_velocity
+    assert vel_param.startswith("d") and vel_param.endswith("_dt")
     assert vel_param == f"d{param}_dt"
     assert vel_node == node
 
     # Test accessor with velocity parameter
-    assert beam.get_state_index(vel_node, vel_param, vel_is_velocity) == vel_idx
+    assert beam.get_state_index(vel_node, vel_param) == vel_idx
 
-    # Test convenience handling of velocity parameters
-    assert (
-        beam.get_state_index(vel_node, vel_param, False) == vel_idx
-    )  # Automatically detect velocity parameter
-    assert (
-        beam.get_state_index(node, param, True) == vel_idx
-    )  # Automatically convert to velocity
+    # Test getter functions for the full mappings
+    state_mapping = beam.get_state_mapping()
+    node_param_mapping = beam.get_node_param_mapping()
+
+    assert len(state_mapping) == len(beam.state_to_node_param)
+    assert len(node_param_mapping) == len(beam.node_param_to_state)
+    assert state_mapping[idx_example] == (param, node)
+    assert node_param_mapping[(param, node)] == idx_example
 
 
 def test_state_mapping_with_boundary_conditions(beam_files):
@@ -493,12 +490,12 @@ def test_state_mapping_with_boundary_conditions(beam_files):
     beam = DynamicEulerBernoulliBeam(linear_file)
 
     # First node (0) already has fixed boundary condition, check 2nd and 3rd nodes
-    node1_w_pos_idx = beam.get_state_index(1, "w", False)
-    node1_w_vel_idx = beam.get_state_index(1, "w", True)
+    node1_w_pos_idx = beam.get_state_index(1, "w")
+    node1_w_vel_idx = beam.get_state_index(1, "dw_dt")
 
     # Check that w and dw_dt for node 1 are correctly mapped
-    assert beam.get_state_to_node_param(node1_w_pos_idx) == ("w", 1, False)
-    assert beam.get_state_to_node_param(node1_w_vel_idx) == ("dw_dt", 1, True)
+    assert beam.get_state_to_node_param(node1_w_pos_idx) == ("w", 1)
+    assert beam.get_state_to_node_param(node1_w_vel_idx) == ("dw_dt", 1)
 
     # The state indices should be offset by n_pos_states
     n_pos_states = len(beam.state_to_node_param) // 2
@@ -522,15 +519,13 @@ def test_fluid_coefficients_mapping(beam_file_with_fluid):
 
     # Check that all velocity indices correspond to 'w' parameters
     for idx in w_vel_indices:
-        param, node, is_velocity = beam.get_state_to_node_param(idx)
+        param, node = beam.get_state_to_node_param(idx)
         assert param == "dw_dt"
-        assert is_velocity
 
     # Check that all position indices correspond to 'w' parameters
     for idx in w_pos_indices:
-        param, node, is_velocity = beam.get_state_to_node_param(idx)
+        param, node = beam.get_state_to_node_param(idx)
         assert param == "w"
-        assert not is_velocity
 
     # The number of velocity indices should match the number of position indices
     assert len(w_vel_indices) == len(w_pos_indices)
