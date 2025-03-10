@@ -11,9 +11,9 @@ from continuum_robot.models.dynamic_beam_model import (
 )
 
 # Simulation parameters
-T_FINAL = 0.1  # seconds
+T_FINAL = 0.5  # seconds
 DT = 0.01  # Time step for animation
-N_SEGMENTS = 4  # Number of beam segments
+N_SEGMENTS = 6  # Number of beam segments
 
 
 def create_beam_parameters():
@@ -37,7 +37,8 @@ def create_beam_parameters():
         # Create 6 segments, first has fixed boundary condition
         params = [
             (length, E, MInertia, rho, A, beam_type, bc, wetted_area, drag_coef)
-            for beam_type, bc in [("nonlinear", "FIXED")] + [("nonlinear", "NONE")] * 5
+            for beam_type, bc in [("nonlinear", "FIXED")]
+            + [("nonlinear", "NONE")] * (N_SEGMENTS - 1)
         ]
 
         for p in params:
@@ -62,10 +63,20 @@ def solve_beam_dynamics(beam, x0, t_span):
     """Solve beam dynamics using solve_ivp."""
     # Create time points for solution
 
-    def u_nonlinear(t):
-        return np.sin(t) * np.ones(len(x0) // 2)
+    # Zero input force
+    def u(t):
+        u = np.zeros(len(x0) // 2)
+        if t < 0.01:
+            u[-2] = 0.1  # Impulse at tip
+        return u
 
-    sol_nonlinear = solve_ivp(lambda t, x: beam(t, x, u_nonlinear), t_span, x0)
+    # Solve system
+    sol_nonlinear = solve_ivp(
+        lambda t, x: beam(t, x, u),
+        t_span,
+        x0,
+        method="RK45",
+    )
 
     return sol_nonlinear
 
@@ -82,7 +93,7 @@ def extract_beam_shapes(sol, n_segments, dx):
     # For each time step
     for i in range(len(sol.t)):
         # Get positions at this time
-        pos = sol.y[n_pos::2, i]
+        pos = sol.y[n_pos + 1 :: 3, i]
 
         # Build beam shape
         x[i, 0] = 0  # Fixed base
@@ -134,7 +145,7 @@ def main():
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 12))
 
         # Animation plot
-        ax1.set_xlim(0.0, 1.1)
+        ax1.set_xlim(0.0, 1.6)
         # Add padding to y limits
         y_pad = (np.max(y_lin) - np.min(y_lin)) * 0.1
         ax1.set_ylim(np.min(y_lin) - y_pad, np.max(y_lin) + y_pad)
@@ -147,7 +158,7 @@ def main():
         ax1.legend()
 
         # Tip displacement plot
-        ax2.plot(sol_lin.t, y_lin[:, -1], "b-", label="Nonlinear")
+        ax2.plot(sol_lin.t, y_lin[:, -2], "b-", label="Nonlinear")
         ax2.set_xlabel("Time (s)")
         ax2.set_ylabel("Tip Displacement (m)")
         ax2.set_title("Beam Tip Response")
