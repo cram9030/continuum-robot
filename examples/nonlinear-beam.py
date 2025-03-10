@@ -5,7 +5,10 @@ from matplotlib.animation import FuncAnimation
 import tempfile
 import os
 
-from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
+from continuum_robot.models.dynamic_beam_model import (
+    DynamicEulerBernoulliBeam,
+    FluidDynamicsParams,
+)
 
 # Simulation parameters
 T_FINAL = 0.1  # seconds
@@ -18,7 +21,7 @@ def create_beam_parameters():
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csv") as f:
         # Write header
         f.write(
-            "length,elastic_modulus,moment_inertia,density,cross_area,type,boundary_condition\n"
+            "length,elastic_modulus,moment_inertia,density,cross_area,type,boundary_condition,wetted_area,drag_coef\n"
         )
 
         # Nitinol parameters
@@ -28,10 +31,12 @@ def create_beam_parameters():
         MInertia = np.pi * r**4 / 4  # Moment of inertia
         rho = 6450  # Density (kg/m³)
         A = np.pi * r**2  # Cross-sectional area
+        wetted_area = r * length  # Wetted area (m²)
+        drag_coef = 0.82  # Drag coefficient for a long cylinder https://en.wikipedia.org/wiki/Drag_coefficient
 
         # Create 6 segments, first has fixed boundary condition
         params = [
-            (length, E, MInertia, rho, A, beam_type, bc)
+            (length, E, MInertia, rho, A, beam_type, bc, wetted_area, drag_coef)
             for beam_type, bc in [("nonlinear", "FIXED")] + [("nonlinear", "NONE")] * 5
         ]
 
@@ -53,7 +58,7 @@ def setup_initial_conditions(beam):
     return x0
 
 
-def solve_beam_dynamics(beam, x0, t_span, dt):
+def solve_beam_dynamics(beam, x0, t_span):
     """Solve beam dynamics using solve_ivp."""
     # Create time points for solution
 
@@ -97,8 +102,14 @@ def main():
     nonlinear_file = create_beam_parameters()
 
     try:
+        # Create fluid params
+        fluid_params = FluidDynamicsParams(
+            fluid_density=1060.0, enable_fluid_effects=True
+        )
         # Initialize beam models
-        nonlinear_beam = DynamicEulerBernoulliBeam(nonlinear_file)
+        nonlinear_beam = DynamicEulerBernoulliBeam(
+            nonlinear_file, fluid_params=fluid_params
+        )
 
         # Create system functions
         nonlinear_beam.create_system_func()
@@ -109,7 +120,7 @@ def main():
         x0_lin = setup_initial_conditions(nonlinear_beam)
 
         sol_lin = solve_beam_dynamics(
-            nonlinear_beam.get_dynamic_system(), x0_lin, t_span, DT
+            nonlinear_beam.get_dynamic_system(), x0_lin, t_span
         )
 
         # Extract beam shapes

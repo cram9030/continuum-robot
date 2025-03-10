@@ -414,3 +414,127 @@ def test_damping_matrix_prerequisites(nitinol_file: str):
 
     with pytest.raises(RuntimeError):
         beam.create_damping_matrix()
+
+
+def test_dof_mapping_initialization(valid_parameters):
+    """Test initial DOF mapping creation."""
+    beam = LinearEulerBernoulliBeam(valid_parameters, 0.01)
+
+    # Check mappings were created
+    assert hasattr(beam, "dof_to_node_param")
+    assert hasattr(beam, "node_param_to_dof")
+
+    # Check mapping for a 4-segment beam (5 nodes, 10 DOFs)
+    assert len(beam.dof_to_node_param) == 10
+    assert len(beam.node_param_to_dof) == 10
+
+    # Check first node mappings
+    assert beam.dof_to_node_param[0] == ("w", 0)
+    assert beam.dof_to_node_param[1] == ("phi", 0)
+
+    # Check last node mappings
+    assert beam.dof_to_node_param[8] == ("w", 4)
+    assert beam.dof_to_node_param[9] == ("phi", 4)
+
+    # Check reverse mappings
+    assert beam.node_param_to_dof[("w", 0)] == 0
+    assert beam.node_param_to_dof[("phi", 4)] == 9
+
+
+def test_dof_mapping_boundary_conditions(valid_parameters):
+    """Test DOF mapping updates with boundary conditions."""
+    beam = LinearEulerBernoulliBeam(valid_parameters, 0.01)
+    beam.create_mass_matrix()
+    beam.create_stiffness_matrix()
+
+    # Store original mappings
+    orig_dof_to_node_param = beam.dof_to_node_param.copy()
+
+    # Apply boundary conditions
+    beam.apply_boundary_conditions({0: BoundaryConditionType.FIXED})
+
+    # Check mappings were updated
+    assert len(beam.dof_to_node_param) == 8  # Original 10 - 2 constrained DOFs
+
+    # Check node 0 DOFs are no longer in the mapping values
+    assert ("w", 0) not in beam.dof_to_node_param.values()
+    assert ("phi", 0) not in beam.dof_to_node_param.values()
+
+    # Check that previously node 1 DOFs are now at indices 0 and 1
+    assert beam.dof_to_node_param[0] == orig_dof_to_node_param[2]  # w at node 1
+    assert beam.dof_to_node_param[1] == orig_dof_to_node_param[3]  # phi at node 1
+
+    # Test the accessor methods
+    assert beam.get_dof_to_node_param(0) == ("w", 1)
+    assert beam.get_dof_index(1, "w") == 0
+
+
+def test_dof_mapping_clear_boundary_conditions(valid_parameters):
+    """Test DOF mapping restoration after clearing boundary conditions."""
+    beam = LinearEulerBernoulliBeam(valid_parameters, 0.01)
+    beam.create_mass_matrix()
+    beam.create_stiffness_matrix()
+
+    # Store original mappings
+    orig_dof_to_node_param = beam.dof_to_node_param.copy()
+    orig_node_param_to_dof = beam.node_param_to_dof.copy()
+
+    # Apply boundary conditions
+    beam.apply_boundary_conditions({0: BoundaryConditionType.FIXED})
+
+    # Check mappings were updated
+    assert len(beam.dof_to_node_param) == 8
+
+    # Clear boundary conditions
+    beam.clear_boundary_conditions()
+
+    # Check mappings were restored
+    assert len(beam.dof_to_node_param) == 10
+    assert beam.dof_to_node_param == orig_dof_to_node_param
+    assert beam.node_param_to_dof == orig_node_param_to_dof
+
+
+def test_dof_mapping_multiple_boundary_conditions(valid_parameters):
+    """Test DOF mapping with multiple boundary conditions."""
+    beam = LinearEulerBernoulliBeam(valid_parameters, 0.01)
+    beam.create_mass_matrix()
+    beam.create_stiffness_matrix()
+
+    # Apply multiple boundary conditions
+    conditions = {
+        0: BoundaryConditionType.FIXED,  # Constrains DOFs 0,1
+        2: BoundaryConditionType.PINNED,  # Constrains DOF 4
+    }
+    beam.apply_boundary_conditions(conditions)
+
+    # Check mappings were updated correctly
+    assert len(beam.dof_to_node_param) == 7  # Original 10 - 3 constrained DOFs
+
+    # After remapping, we should have new DOFs starting from 0
+    # Check that nodes 0 and 2's constrained DOFs are gone
+    assert ("w", 0) not in beam.dof_to_node_param.values()
+    assert ("phi", 0) not in beam.dof_to_node_param.values()
+    assert ("w", 2) not in beam.dof_to_node_param.values()
+
+    # Test accessor methods
+    assert beam.get_dof_to_node_param(0) == ("w", 1)
+
+    # This would originally be DOF 5 (phi, 2), now it should be DOF 1
+    assert beam.get_dof_index(2, "phi") == 2
+
+
+def test_dof_access_errors(valid_parameters):
+    """Test error handling in DOF mapping accessors."""
+    beam = LinearEulerBernoulliBeam(valid_parameters, 0.01)
+
+    # Test invalid DOF index
+    with pytest.raises(KeyError):
+        beam.get_dof_to_node_param(20)
+
+    # Test invalid parameter
+    with pytest.raises(KeyError):
+        beam.get_dof_index(0, "invalid_param")
+
+    # Test invalid node
+    with pytest.raises(KeyError):
+        beam.get_dof_index(10, "w")

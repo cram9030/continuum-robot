@@ -120,9 +120,21 @@ Run the test suite to verify functionality:
 ```bash
 # Run all tests
 pytest tests/
+```
+running individual tests the file or the test itself can be specified. The example below shows it for test_dynamic_beam.py
 
-# Run tests with coverage report
-pytest --cov=src tests/
+```bash
+# Run all dynamic beam tests
+pytest tests/test_dynamic_beam.py
+
+# Run test_initialization
+pytest tests/test_dynamic_beam.py::test_initialization
+```
+
+This can also be done with docker
+
+```bash
+docker run continuum_robot pytest tests/test_dynamic_beam.py
 ```
 
 when developing new features remember to reinstall the package if the imports have changed
@@ -138,4 +150,9 @@ The project includes example simulations to demonstrate functionality:
 ```bash
 # Run linear beam simulation example
 python examples/linear-beam.py
+
+# Run pyodide examples
+examples/pyodide_example/setup_pyode_example.sh
+# Then open in browser
+# http://127.0.0.1:8000/
 ```

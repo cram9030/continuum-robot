@@ -123,6 +123,9 @@ class DynamicEulerBernoulliBeam:
         self.system_func = None
         self.input_func = None
 
+        # Initialize state mapping
+        self._initialize_state_mapping()
+
         # Precompute fluid dynamics coefficients if enabled
         self.fluid_coefficients = None
         if self.fluid_params.enable_fluid_effects:
@@ -172,6 +175,123 @@ class DynamicEulerBernoulliBeam:
             if (self.params["wetted_area"] < 0).any():
                 raise ValueError("Wetted areas cannot be negative")
 
+    def _initialize_state_mapping(self):
+        """
+        Initialize mapping between state vector indices and physical quantities.
+
+        The state vector consists of two parts:
+        - First half: positions (w, phi for linear; u, w, phi for nonlinear)
+        - Second half: velocities (dw_dt, dphi_dt for linear; du_dt, dw_dt, dphi_dt for nonlinear)
+        """
+        self.state_to_node_param = (
+            {}
+        )  # Maps state index to (parameter, node, is_velocity) tuple
+        self.node_param_to_state = (
+            {}
+        )  # Maps (parameter, node, is_velocity) tuple to state index
+
+        if self.linear_model:
+            # Get position mapping from linear model
+            pos_mapping = self.linear_model.dof_to_node_param
+            n_dofs = len(pos_mapping)
+
+            # Create position part of mapping
+            for dof_idx, (param, node) in pos_mapping.items():
+                self.state_to_node_param[dof_idx] = (
+                    param,
+                    node,
+                    False,
+                )  # False = position
+                self.node_param_to_state[(param, node, False)] = dof_idx
+
+            # Create velocity part of mapping
+            for dof_idx, (param, node) in pos_mapping.items():
+                vel_idx = dof_idx + n_dofs
+                vel_param = f"d{param}_dt"  # e.g., "w" becomes "dw_dt"
+                self.state_to_node_param[vel_idx] = (
+                    vel_param,
+                    node,
+                    True,
+                )  # True = velocity
+                self.node_param_to_state[(vel_param, node, True)] = vel_idx
+
+        elif self.nonlinear_model:
+            # Get position mapping from nonlinear model
+            pos_mapping = self.nonlinear_model.dof_to_node_param
+            n_dofs = len(pos_mapping)
+
+            # Create position part of mapping
+            for dof_idx, (param, node) in pos_mapping.items():
+                self.state_to_node_param[dof_idx] = (
+                    param,
+                    node,
+                    False,
+                )  # False = position
+                self.node_param_to_state[(param, node, False)] = dof_idx
+
+            # Create velocity part of mapping
+            for dof_idx, (param, node) in pos_mapping.items():
+                vel_idx = dof_idx + n_dofs
+                vel_param = f"d{param}_dt"  # e.g., "u" becomes "du_dt"
+                self.state_to_node_param[vel_idx] = (
+                    vel_param,
+                    node,
+                    True,
+                )  # True = velocity
+                self.node_param_to_state[(vel_param, node, True)] = vel_idx
+
+        # Store original mappings for when boundary conditions are cleared/reapplied
+        self._original_state_to_node_param = self.state_to_node_param.copy()
+        self._original_node_param_to_state = self.node_param_to_state.copy()
+
+    def get_state_to_node_param(self, state_idx):
+        """
+        Get the (parameter, node, is_velocity) tuple for a given state index.
+
+        Args:
+            state_idx: State vector index
+
+        Returns:
+            Tuple (parameter, node, is_velocity)
+
+        Raises:
+            KeyError: If the state index is invalid
+        """
+        if state_idx not in self.state_to_node_param:
+            raise KeyError(f"Invalid state index: {state_idx}")
+        return self.state_to_node_param[state_idx]
+
+    def get_state_index(self, node_idx, param, is_velocity=False):
+        """
+        Get the state vector index for a given node, parameter, and velocity flag.
+
+        Args:
+            node_idx: Node index
+            param: Parameter type ('w', 'phi', etc. or 'dw_dt', 'dphi_dt', etc.)
+            is_velocity: Whether this is a velocity component (default: False)
+
+        Returns:
+            State vector index
+
+        Raises:
+            KeyError: If the node/parameter combination is invalid
+        """
+        # If velocity parameter is provided with is_velocity=False, adjust
+        if not is_velocity and param.startswith("d") and param.endswith("_dt"):
+            is_velocity = True
+            param = param[1:-3]  # Remove 'd' and '_dt'
+
+        # If position parameter is provided with is_velocity=True, adjust
+        if is_velocity and not param.startswith("d"):
+            param = f"d{param}_dt"
+
+        if (param, node_idx, is_velocity) not in self.node_param_to_state:
+            raise KeyError(
+                f"Invalid node/parameter combination: ({node_idx}, {param}, {is_velocity})"
+            )
+
+        return self.node_param_to_state[(param, node_idx, is_velocity)]
+
     def _process_boundary_conditions(self) -> Dict[int, BoundaryConditionType]:
         """Process boundary conditions from parameters."""
         conditions = {}
@@ -188,100 +308,64 @@ class DynamicEulerBernoulliBeam:
         return conditions
 
     def _precompute_fluid_coefficients(self) -> None:
-        """Precompute fluid dynamics coefficients for efficiency."""
+        """Precompute fluid dynamics coefficients using state mapping."""
+        if not self.fluid_params.enable_fluid_effects:
+            return
+
+        # Get wetted areas and drag coefficients from appropriate model
         if self.linear_model:
-            # Process linear model fluid coefficients
-            wetted_areas = self.linear_params["wetted_area"].values
-            drag_coefs = self.linear_params["drag_coef"].values
+            params_df = self.linear_params
+        else:
+            params_df = self.nonlinear_params
 
-            # Add coefficient for final node
-            wetted_areas = np.append(wetted_areas, wetted_areas[-1])
-            drag_coefs = np.append(drag_coefs, drag_coefs[-1])
+        # Extract wetted areas and drag coefficients for each node
+        n_nodes = len(params_df) + 1  # +1 for the end node
+        wetted_areas = np.zeros(n_nodes)
+        drag_coefs = np.zeros(n_nodes)
 
-            # Filter out constrained DOFs
-            if self.linear_constrained_dofs:
-                dofs_to_keep = sorted(
-                    list(
-                        set(range(len(wetted_areas) * 2))
-                        - set(self.linear_constrained_dofs)
-                    )
-                )
-                node_indices = [
-                    i // 2 for i in dofs_to_keep if i % 2 == 0
-                ]  # Only translational DOFs
+        # Fill in values for segment nodes
+        for i, row in params_df.iterrows():
+            wetted_areas[i] = row["wetted_area"]
+            drag_coefs[i] = row["drag_coef"]
 
-                node_areas = np.array([wetted_areas[i] for i in node_indices])
-                node_drag = np.array([drag_coefs[i] for i in node_indices])
+        # Final node (use last segment values)
+        wetted_areas[-1] = wetted_areas[-2]
+        drag_coefs[-1] = drag_coefs[-2]
 
-                # Precompute the drag factor for each node
-                drag_factors = (
-                    0.5 * self.fluid_params.fluid_density * node_drag * node_areas
-                )
+        # Find all transverse displacement ('w') parameters and their nodes
+        w_pos_indices = []
+        w_nodes = []
 
-                # Map from velocity index to drag factor
-                vel_to_drag = {
-                    dofs_to_keep[i + len(node_indices)]: drag_factors[i]
-                    for i in range(len(node_indices))
-                }
+        # First, identify position indices for 'w' parameters
+        for idx, (param, node, is_velocity) in self.state_to_node_param.items():
+            if param == "w" and not is_velocity and node < n_nodes:
+                w_pos_indices.append(idx)
+                w_nodes.append(node)
 
-                self.fluid_coefficients = {
-                    "linear": {
-                        "drag_factors": drag_factors,
-                        "vel_to_drag": vel_to_drag,
-                        "translation_indices": [
-                            i
-                            for i in range(len(dofs_to_keep) // 2)
-                            if dofs_to_keep[i] % 2 == 0
-                        ],
-                    }
-                }
+        # Number of position/velocity states
+        n_pos_states = len(self.state_to_node_param) // 2
 
-        elif self.nonlinear_model:
-            # Process nonlinear model fluid coefficients
-            wetted_areas = self.nonlinear_params["wetted_area"].values
-            drag_coefs = self.nonlinear_params["drag_coef"].values
+        # Map position indices to velocity indices
+        w_vel_indices = [idx + n_pos_states for idx in w_pos_indices]
 
-            # Add coefficient for final node
-            wetted_areas = np.append(wetted_areas, wetted_areas[-1])
-            drag_coefs = np.append(drag_coefs, drag_coefs[-1])
+        # Compute drag factors for these nodes
+        drag_factors = []
+        for node in w_nodes:
+            drag_factor = (
+                0.5
+                * self.fluid_params.fluid_density
+                * drag_coefs[node]
+                * wetted_areas[node]
+            )
+            drag_factors.append(drag_factor)
 
-            # Filter out constrained DOFs
-            if self.nonlinear_constrained_dofs:
-                dofs_to_keep = sorted(
-                    list(
-                        set(range(len(wetted_areas) * 3))
-                        - set(self.nonlinear_constrained_dofs)
-                    )
-                )
-                node_indices = [
-                    i // 3 for i in dofs_to_keep if i % 3 == 0
-                ]  # Only axial DOFs
-
-                node_areas = np.array([wetted_areas[i] for i in node_indices])
-                node_drag = np.array([drag_coefs[i] for i in node_indices])
-
-                # Precompute the drag factor for each node
-                drag_factors = (
-                    0.5 * self.fluid_params.fluid_density * node_drag * node_areas
-                )
-
-                # Map from velocity index to drag factor
-                n_positions = len(dofs_to_keep)
-                vel_to_drag = {
-                    dofs_to_keep[i] + n_positions: drag_factors[i // 3]
-                    for i in range(n_positions)
-                    if i % 3 == 0
-                }
-
-                self.fluid_coefficients = {
-                    "nonlinear": {
-                        "drag_factors": drag_factors,
-                        "vel_to_drag": vel_to_drag,
-                        "axial_indices": [
-                            i for i in range(n_positions) if dofs_to_keep[i] % 3 == 0
-                        ],
-                    }
-                }
+        # Store the computed coefficients
+        self.fluid_coefficients = {
+            "w_vel_indices": w_vel_indices,  # Indices of 'w' velocities in state vector
+            "w_pos_indices": w_pos_indices,  # Indices of 'w' positions in state vector
+            "drag_factors": drag_factors,  # Drag factors for each 'w' DOF
+            "n_pos_states": n_pos_states,  # Number of position states
+        }
 
     def create_system_func(self) -> None:
         """Create system matrix function A(x).
@@ -315,28 +399,29 @@ class DynamicEulerBernoulliBeam:
 
             if self.fluid_params.enable_fluid_effects and self.fluid_coefficients:
                 # Get precomputed coefficients
-                fluid_coefs = self.fluid_coefficients["linear"]
-                vel_to_drag = fluid_coefs["vel_to_drag"]
+                n_pos_states = self.fluid_coefficients["n_pos_states"]
+                w_vel_indices = self.fluid_coefficients["w_vel_indices"]
+                drag_factors = self.fluid_coefficients["drag_factors"]
 
                 def system_with_fluid(x):
-                    # Extract velocities
-                    velocities = x[n:]
-
-                    # Create drag forces vector (zeros initially)
-                    drag_forces = np.zeros_like(velocities)
-
-                    # Apply drag to translational DOFs only
-                    for vel_idx, drag_factor in vel_to_drag.items():
-                        vel = velocities[
-                            vel_idx - n
-                        ]  # Adjust index to velocities vector
-                        drag_forces[vel_idx - n] = -drag_factor * vel * np.abs(vel)
-
                     # Apply base linear system
                     result = A.dot(x)
 
-                    # Add drag forces to acceleration terms
-                    result[n:] += self.linear_M_inv.dot(drag_forces)
+                    # Create drag forces vector (zeros initially)
+                    drag_forces = np.zeros(n_pos_states)
+
+                    # Apply drag forces based on transverse velocities
+                    for i, vel_idx in enumerate(w_vel_indices):
+                        vel = x[vel_idx]
+                        drag_factor = drag_factors[i]
+                        # Nonlinear drag proportional to velocity^2
+                        drag_force = -drag_factor * vel * np.abs(vel)
+                        # Corresponding force index is the position index
+                        force_idx = vel_idx - n_pos_states
+                        drag_forces[force_idx] = drag_force
+
+                    # Add drag forces to acceleration terms through mass matrix inverse
+                    result[n_pos_states:] += self.linear_M_inv.dot(drag_forces)
 
                     return result
 
@@ -347,8 +432,9 @@ class DynamicEulerBernoulliBeam:
         elif self.nonlinear_model:
             if self.fluid_params.enable_fluid_effects and self.fluid_coefficients:
                 # Get precomputed coefficients
-                fluid_coefs = self.fluid_coefficients["nonlinear"]
-                vel_to_drag = fluid_coefs["vel_to_drag"]
+                n_pos_states = self.fluid_coefficients["n_pos_states"]
+                w_vel_indices = self.fluid_coefficients["w_vel_indices"]
+                drag_factors = self.fluid_coefficients["drag_factors"]
 
                 def nonlinear_system_with_fluid(x):
                     n = len(x) // 2
@@ -361,12 +447,15 @@ class DynamicEulerBernoulliBeam:
                     # Create drag forces vector (zeros initially)
                     drag_forces = np.zeros_like(velocities)
 
-                    # Apply drag to axial DOFs only
-                    for vel_idx, drag_factor in vel_to_drag.items():
-                        vel = velocities[
-                            vel_idx - n
-                        ]  # Adjust index to velocities vector
-                        drag_forces[vel_idx - n] = -drag_factor * vel * np.abs(vel)
+                    # Apply drag forces based on transverse velocities
+                    for i, vel_idx in enumerate(w_vel_indices):
+                        vel = x[vel_idx]
+                        drag_factor = drag_factors[i]
+                        # Nonlinear drag proportional to velocity^2
+                        drag_force = -drag_factor * vel * np.abs(vel)
+                        # Corresponding force index is the position index
+                        force_idx = vel_idx - n_pos_states
+                        drag_forces[force_idx] = drag_force
 
                     # Combine position derivatives (velocities) with
                     # velocity derivatives (accelerations = forces/mass)

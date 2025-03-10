@@ -306,7 +306,7 @@ def test_mixed_boundary_conditions(initialized_beam):
     assert 1 in constrained_dofs  # θ₁ from fixed
     assert 2 in constrained_dofs  # w₁ from fixed
     assert 6 in constrained_dofs  # u₃ from pinned
-    assert 8 in constrained_dofs  # w₃ from pinned
+    assert 7 in constrained_dofs  # w₃ from pinned
 
 
 def test_boundary_condition_clearing(initialized_beam):
@@ -363,3 +363,133 @@ def test_segment_force_combination(initialized_beam):
 
     # Last node should only have forces from last segment
     assert not np.allclose(f[-3:], 0)  # Should have forces
+
+
+def test_dof_mapping_initialization(valid_parameters):
+    """Test initial DOF mapping creation."""
+    beam = NonlinearEulerBernoulliBeam(valid_parameters)
+
+    # Check mappings were created
+    assert hasattr(beam, "dof_to_node_param")
+    assert hasattr(beam, "node_param_to_dof")
+
+    # Check mapping for a 4-segment beam (5 nodes, 15 DOFs)
+    assert len(beam.dof_to_node_param) == 15
+    assert len(beam.node_param_to_dof) == 15
+
+    # Check first node mappings
+    assert beam.dof_to_node_param[0] == ("u", 0)
+    assert beam.dof_to_node_param[1] == ("w", 0)
+    assert beam.dof_to_node_param[2] == ("phi", 0)
+
+    # Check last node mappings
+    assert beam.dof_to_node_param[12] == ("u", 4)
+    assert beam.dof_to_node_param[13] == ("w", 4)
+    assert beam.dof_to_node_param[14] == ("phi", 4)
+
+    # Check reverse mappings
+    assert beam.node_param_to_dof[("u", 0)] == 0
+    assert beam.node_param_to_dof[("w", 4)] == 13
+    assert beam.node_param_to_dof[("phi", 4)] == 14
+
+
+def test_dof_mapping_boundary_conditions(initialized_beam):
+    """Test DOF mapping updates with boundary conditions."""
+    beam = initialized_beam
+
+    # Store original mappings
+    orig_dof_to_node_param = beam.dof_to_node_param.copy()
+
+    # Apply fixed boundary condition at first node
+    beam.apply_boundary_conditions({0: BoundaryConditionType.FIXED})
+
+    print(orig_dof_to_node_param)
+    print(beam.dof_to_node_param)
+    # Check mappings were updated
+    assert len(beam.dof_to_node_param) == 12  # Original 15 - 3 constrained DOFs
+
+    # Check node 0 DOFs are no longer in the mapping values
+    assert ("u", 0) not in beam.dof_to_node_param.values()
+    assert ("w", 0) not in beam.dof_to_node_param.values()
+    assert ("phi", 0) not in beam.dof_to_node_param.values()
+
+    # Check that previously node 1 DOFs are now at indices 0, 1, and 2
+    assert beam.dof_to_node_param[0] == orig_dof_to_node_param[3]  # u at node 1
+    assert beam.dof_to_node_param[1] == orig_dof_to_node_param[4]  # w at node 1
+    assert beam.dof_to_node_param[2] == orig_dof_to_node_param[5]  # phi at node 1
+
+    # Test the accessor methods
+    assert beam.get_dof_to_node_param(0) == ("u", 1)
+    assert beam.get_dof_index(1, "u") == 0
+
+
+def test_dof_mapping_clear_boundary_conditions(initialized_beam):
+    """Test DOF mapping restoration after clearing boundary conditions."""
+    beam = initialized_beam
+
+    # Store original mappings
+    orig_dof_to_node_param = beam.dof_to_node_param.copy()
+    orig_node_param_to_dof = beam.node_param_to_dof.copy()
+
+    # Apply boundary conditions
+    beam.apply_boundary_conditions({0: BoundaryConditionType.FIXED})
+
+    # Check mappings were updated
+    assert len(beam.dof_to_node_param) == 12
+
+    # Clear boundary conditions
+    beam.clear_boundary_conditions()
+
+    # Check mappings were restored
+    assert len(beam.dof_to_node_param) == 15
+    assert beam.dof_to_node_param == orig_dof_to_node_param
+    assert beam.node_param_to_dof == orig_node_param_to_dof
+
+
+def test_dof_mapping_multiple_boundary_conditions(initialized_beam):
+    """Test DOF mapping with multiple boundary conditions."""
+    beam = initialized_beam
+    print(beam.dof_to_node_param)
+
+    # Apply multiple boundary conditions
+    conditions = {
+        0: BoundaryConditionType.FIXED,  # Constrains DOFs 0,1,2
+        2: BoundaryConditionType.PINNED,  # Constrains DOFs 6,8
+    }
+    beam.apply_boundary_conditions(conditions)
+
+    # Check mappings were updated correctly
+    assert len(beam.dof_to_node_param) == 10  # Original 15 - 5 constrained DOFs
+
+    print(beam.dof_to_node_param)
+
+    # After remapping, check that nodes 0 and 2's constrained DOFs are gone
+    assert ("u", 0) not in beam.dof_to_node_param.values()
+    assert ("w", 0) not in beam.dof_to_node_param.values()
+    assert ("phi", 0) not in beam.dof_to_node_param.values()
+    assert ("u", 2) not in beam.dof_to_node_param.values()
+    assert ("w", 2) not in beam.dof_to_node_param.values()
+
+    # Test accessor methods
+    assert beam.get_dof_to_node_param(2) == ("phi", 1)
+
+    # Node 3's u DOF should have been remapped from 9 to a lower index
+    node3_u_dof = beam.get_dof_index(3, "u")
+    assert node3_u_dof < 9  # It should have been moved up in the mapping
+
+
+def test_dof_access_errors(valid_parameters):
+    """Test error handling in DOF mapping accessors."""
+    beam = NonlinearEulerBernoulliBeam(valid_parameters)
+
+    # Test invalid DOF index
+    with pytest.raises(KeyError):
+        beam.get_dof_to_node_param(20)
+
+    # Test invalid parameter
+    with pytest.raises(KeyError):
+        beam.get_dof_index(0, "invalid_param")
+
+    # Test invalid node
+    with pytest.raises(KeyError):
+        beam.get_dof_index(10, "u")
