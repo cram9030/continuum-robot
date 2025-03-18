@@ -17,7 +17,7 @@ class NonlinearEulerBernoulliBeam:
     material and geometric properties.
 
     The nonlinear stiffness is represented as a function K(x) that depends on the
-    current state x=[u₁, θ₁, w₁, u₂, θ₂, w₂].
+    current state x=[u₁, w₁, θ₁, u₂, w₂, θ₂].
 
     Attributes:
         parameters (pd.DataFrame): Dataframe containing beam section parameters
@@ -428,38 +428,38 @@ class NonlinearEulerBernoulliBeam:
             float: bending moment at node 1.
             """
             return (
-                0.0333333333333333
+                0.1
                 * (
-                    0.107142857143003 * A_xx * theta1**3 * length**3
-                    - 0.32142857142901 * A_xx * theta1**2 * theta2 * length**3
-                    + 3.857142857143 * A_xx * theta1**2 * length**2 * w1
-                    - 3.857142857143 * A_xx * theta1**2 * length**2 * w2
-                    - 0.32142857142901 * A_xx * theta1 * theta2**2 * length**3
-                    - 4.0 * A_xx * theta1 * length**3 * u2
-                    + 3.0 * A_xx * theta1 * length**2 * u1
-                    - 11.5714285714239 * A_xx * theta1 * length * w1**2
-                    + 23.1428571428478 * A_xx * theta1 * length * w1 * w2
-                    - 11.5714285714239 * A_xx * theta1 * length * w2**2
-                    + 0.107142857143003 * A_xx * theta2**3 * length**3
-                    + 3.857142857143 * A_xx * theta2**2 * length**2 * w1
-                    - 3.857142857143 * A_xx * theta2**2 * length**2 * w2
-                    + 1.0 * A_xx * theta2 * length**3 * u2
-                    + 3.0 * A_xx * theta2 * length**2 * u1
-                    - 11.571428571429 * A_xx * theta2 * length * w1**2
-                    + 23.142857142858 * A_xx * theta2 * length * w1 * w2
-                    - 11.571428571429 * A_xx * theta2 * length * w2**2
-                    + 3.0 * A_xx * length**2 * u2 * w1
-                    - 3.0 * A_xx * length**2 * u2 * w2
-                    - 36.0 * A_xx * length * u1 * w1
-                    + 36.0 * A_xx * length * u1 * w2
-                    + 30.857142857144 * A_xx * w1**3
-                    - 92.5714285714321 * A_xx * w1**2 * w2
-                    + 92.5714285714321 * A_xx * w1 * w2**2
-                    - 30.857142857144 * A_xx * w2**3
-                    - 180.0 * D_xx * theta1 * length
-                    - 180.0 * D_xx * theta2 * length
-                    + 360.0 * D_xx * w1
-                    - 360.0 * D_xx * w2
+                    0.0357142857143344 * A_xx * theta1**3 * length**3
+                    - 0.107142857143003 * A_xx * theta1**2 * theta2 * length**3
+                    + 1.28571428571433 * A_xx * theta1**2 * length**2 * w1
+                    - 1.28571428571433 * A_xx * theta1**2 * length**2 * w2
+                    - 0.107142857143003 * A_xx * theta1 * theta2**2 * length**3
+                    + 1.0 * A_xx * theta1 * length**2 * u1
+                    - 1.0 * A_xx * theta1 * length**2 * u2
+                    - 3.8571428571413 * A_xx * theta1 * length * w1**2
+                    + 7.7142857142826 * A_xx * theta1 * length * w1 * w2
+                    - 3.8571428571413 * A_xx * theta1 * length * w2**2
+                    + 0.0357142857143344 * A_xx * theta2**3 * length**3
+                    + 1.28571428571433 * A_xx * theta2**2 * length**2 * w1
+                    - 1.28571428571433 * A_xx * theta2**2 * length**2 * w2
+                    + 1.0 * A_xx * theta2 * length**2 * u1
+                    - 1.0 * A_xx * theta2 * length**2 * u2
+                    - 3.857142857143 * A_xx * theta2 * length * w1**2
+                    + 7.71428571428601 * A_xx * theta2 * length * w1 * w2
+                    - 3.857142857143 * A_xx * theta2 * length * w2**2
+                    - 12.0 * A_xx * length * u1 * w1
+                    + 12.0 * A_xx * length * u1 * w2
+                    + 12.0 * A_xx * length * u2 * w1
+                    - 12.0 * A_xx * length * u2 * w2
+                    + 10.2857142857147 * A_xx * w1**3
+                    - 30.857142857144 * A_xx * w1**2 * w2
+                    + 30.857142857144 * A_xx * w1 * w2**2
+                    - 10.2857142857147 * A_xx * w2**3
+                    - 60.0 * D_xx * theta1 * length
+                    - 60.0 * D_xx * theta2 * length
+                    + 120.0 * D_xx * w1
+                    - 120.0 * D_xx * w2
                 )
                 / length**3
             )
@@ -646,12 +646,12 @@ class NonlinearEulerBernoulliBeam:
 
             Args:
                 segment_forces: List of segment force arrays, each of size 6
-                            [f1_axial, f1_rotation, f1_transverse, f2_axial, f2_rotation, f2_transverse]
+                            [f1_axial, f1_transverse, f1_rotation, f2_axial, f2_transverse, f2_rotation]
                             where f1 and f2 are forces at start and end nodes of segment
 
             Returns:
                 np.ndarray: Global force vector of size 3*(n_segments+1)
-                Each node has [axial, rotation, transverse] components
+                Each node has [axial, transverse, rotation] components
             """
             n_segments = len(segment_forces)
             n_nodes = n_segments + 1
@@ -676,12 +676,10 @@ class NonlinearEulerBernoulliBeam:
             # Create segment indices and states pairs for mapping
             segment_inputs = [(i, x) for i in range(n_segments)]
 
-            # Only use Pool for parallel force calculations
             segment_forces: List[np.ndarray]
             segment_forces = list(map(_map_segment_force, segment_inputs))
 
             # Reduce: Combine forces from all segments into nodal forces
-            # Done outside Pool since it's a sequential operation
             global_forces = _reduce_forces(segment_forces)
 
             return global_forces

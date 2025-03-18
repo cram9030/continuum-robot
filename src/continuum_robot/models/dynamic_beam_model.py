@@ -425,7 +425,6 @@ class DynamicEulerBernoulliBeam:
                     n = len(x) // 2
                     positions = x[:n]
                     velocities = x[n:]
-                    # print("Velocities:", velocities)
 
                     # Calculate nonlinear stiffness forces
                     k_x = self.nonlinear_model.get_stiffness_function()(positions)
@@ -446,8 +445,6 @@ class DynamicEulerBernoulliBeam:
                             drag_force = -drag_factor * vel * np.abs(vel)
                             # Apply force at the position index
                             drag_forces[force_idx] = drag_force
-                    # print("Drag forces:", drag_forces)
-                    # print("M_inv.dot(k_x):", M_inv.dot(k_x))
                     # Combine position derivatives (velocities) with
                     # velocity derivatives (accelerations = forces/mass)
                     return np.concatenate(
