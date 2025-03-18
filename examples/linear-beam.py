@@ -11,7 +11,7 @@ from continuum_robot.models.dynamic_beam_model import (
 )
 
 # Simulation parameters
-T_FINAL = 0.5  # seconds
+T_FINAL = 10  # seconds
 DT = 0.01  # Time step for animation
 N_SEGMENTS = 6  # Number of beam segments
 

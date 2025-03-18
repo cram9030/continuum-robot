@@ -11,7 +11,7 @@ from continuum_robot.models.dynamic_beam_model import (
 )
 
 # Simulation parameters
-T_FINAL = 0.5  # seconds
+T_FINAL = 5  # seconds
 DT = 0.01  # Time step for animation
 N_SEGMENTS = 6  # Number of beam segments
 
@@ -75,7 +75,7 @@ def solve_beam_dynamics(beam, x0, t_span):
         lambda t, x: beam(t, x, u),
         t_span,
         x0,
-        method="RK45",
+        method="LSODA",
     )
 
     return sol_nonlinear
@@ -115,7 +115,7 @@ def main():
     try:
         # Create fluid params
         fluid_params = FluidDynamicsParams(
-            fluid_density=1060.0, enable_fluid_effects=True
+            fluid_density=1000.0, enable_fluid_effects=True
         )
         # Initialize beam models
         nonlinear_beam = DynamicEulerBernoulliBeam(
@@ -142,7 +142,7 @@ def main():
         )
 
         # Create visualization
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 12))
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(10, 12))
 
         # Animation plot
         ax1.set_xlim(0.0, 1.6)
@@ -158,12 +158,31 @@ def main():
         ax1.legend()
 
         # Tip displacement plot
-        ax2.plot(sol_lin.t, y_lin[:, -2], "b-", label="Nonlinear")
+        ax2.plot(sol_lin.t, y_lin[:, -2], "b-", label="Tip Displacement")
+        ax2.plot(sol_lin.t, y_lin[:, -5], "r-", label="Tip -1 Displacement")
         ax2.set_xlabel("Time (s)")
         ax2.set_ylabel("Tip Displacement (m)")
         ax2.set_title("Beam Tip Response")
         ax2.grid(True)
         ax2.legend()
+
+        # Tip slope plot
+        ax3.plot(sol_lin.t, y_lin[:, -1], "b-", label="Tip Slope")
+        ax3.plot(sol_lin.t, y_lin[:, -4], "r-", label="Tip -1 Slope")
+        ax3.set_xlabel("Time (s)")
+        ax3.set_ylabel("Tip Slope (m)")
+        ax3.set_title("Beam Tip Slope Response")
+        ax3.grid(True)
+        ax3.legend()
+
+        # Tip displacement plot
+        ax4.plot(sol_lin.t, y_lin[:, -3], "b-", label="Tip Axial Displacement")
+        ax4.plot(sol_lin.t, y_lin[:, -6], "r-", label="Tip -1 Axial Displacement")
+        ax4.set_xlabel("Time (s)")
+        ax4.set_ylabel("Tip Axial Displacement (m)")
+        ax4.set_title("Beam Tip Response")
+        ax4.grid(True)
+        ax4.legend()
 
         def animate(frame):
             line_lin.set_data(x_lin[frame], y_lin[frame])
