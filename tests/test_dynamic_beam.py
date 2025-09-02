@@ -221,6 +221,7 @@ def test_solve_ivp_integration(beam_files):
     sol_linear = solve_ivp(
         lambda t, x: linear_system(t, x, u_linear(t)), t_span, x0_linear
     )
+
     assert sol_linear.success
     assert sol_linear.t[0] == t_span[0]
     assert sol_linear.t[-1] == t_span[1]
@@ -240,6 +241,7 @@ def test_solve_ivp_integration(beam_files):
     sol_nonlinear = solve_ivp(
         lambda t, x: nonlinear_system(t, x, u_nonlinear(t)), t_span, x0_nonlinear
     )
+
     assert sol_nonlinear.success
     assert sol_nonlinear.t[0] == t_span[0]
     assert sol_nonlinear.t[-1] == t_span[1]
