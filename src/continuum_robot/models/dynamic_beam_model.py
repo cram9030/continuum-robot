@@ -180,8 +180,8 @@ class DynamicEulerBernoulliBeam:
         Initialize mapping between state vector indices and physical quantities.
 
         The state vector consists of two parts:
-        - First half: positions (w, phi for linear; u, w, phi for nonlinear)
-        - Second half: velocities (dw_dt, dphi_dt for linear; du_dt, dw_dt, dphi_dt for nonlinear)
+        - First half: positions (u, w, phi for both linear and nonlinear)
+        - Second half: velocities (du_dt, dw_dt, dphi_dt for both linear and nonlinear)
         """
         self.state_to_node_param = {}  # Maps state index to (parameter, node) pair
         self.node_param_to_state = {}  # Maps (parameter, node) pair to state index
@@ -247,7 +247,7 @@ class DynamicEulerBernoulliBeam:
 
         Args:
             node_idx: Node index
-            param: Parameter type ('w', 'phi', 'dw_dt', 'dphi_dt', etc.)
+            param: Parameter type ('u', 'w', 'phi', 'du_dt', 'dw_dt', 'dphi_dt', etc.)
 
         Returns:
             State vector index

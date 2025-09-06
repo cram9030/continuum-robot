@@ -14,7 +14,7 @@ def create_beam_parameters():
     """Create CSV file with beam parameters."""
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csv") as f:
         f.write(
-            "length,elastic_modulus,moment_inertia,density,cross_area,type,boundary_condition\n"
+            "length,elastic_modulus,moment_inertia,density,cross_area,type,boundary_condition,wetted_area,drag_coef\n"
         )
 
         # Nitinol parameters
@@ -25,8 +25,12 @@ def create_beam_parameters():
         rho = 6450  # Density (kg/m³)
         A = np.pi * r**2  # Cross-sectional area
 
+        # Add fluid dynamics parameters (set to 0 to disable)
+        wetted_area = 0.0
+        drag_coef = 0.0
+
         params = [
-            (length, E, MInertia, rho, A, beam_type, bc)
+            (length, E, MInertia, rho, A, beam_type, bc, wetted_area, drag_coef)
             for beam_type, bc in [("linear", "FIXED")] + [("linear", "NONE")] * 5
         ]
 
@@ -81,13 +85,18 @@ def run_simulation():
 
     # Calculate beam positions
     for i in range(len(sol.t)):
-        pos = sol.y[n_pos::2, i]
+        # For linear beam with 3 DOFs per node (u, w, phi), extract w (transverse displacement)
+        # State vector layout: [u1, w1, phi1, u2, w2, phi2, ..., du1_dt, dw1_dt, dphi1_dt, ...]
+        # We want w components which are at indices 1, 4, 7, 10, ... (1 + 3*j)
+        pos = sol.y[
+            n_pos + 1 :: 3, i
+        ]  # Extract w displacements from first half of state
         x[i, 0] = 0
         y[i, 0] = 0
 
         for j in range(N_SEGMENTS):
             x[i, j + 1] = x[i, j] + dx
-            y[i, j + 1] = pos[j]
+            y[i, j + 1] = pos[j] if j < len(pos) else 0
 
     # Format results for JSON
     results = {

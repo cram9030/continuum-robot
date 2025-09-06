@@ -94,8 +94,10 @@ def extract_beam_shapes(sol, n_segments, dx):
 
     # For each time step
     for i in range(len(sol.t)):
-        # Get positions at this time
-        pos = sol.y[n_pos::2, i]
+        # Get positions at this time - for linear beam with 3 DOFs per node
+        # State vector layout: [u1, w1, phi1, u2, w2, phi2, ..., du1_dt, dw1_dt, dphi1_dt, ...]
+        # We want w components which are at indices 1, 4, 7, 10, ... (1 + 3*j)
+        pos = sol.y[n_pos + 1 :: 3, i]  # Extract w (transverse) displacements
 
         # Build beam shape
         x[i, 0] = 0  # Fixed base
@@ -105,7 +107,7 @@ def extract_beam_shapes(sol, n_segments, dx):
             # Add segment projected length
             x[i, j + 1] = x[i, j] + dx
             # Add displacement
-            y[i, j + 1] = pos[j]
+            y[i, j + 1] = pos[j] if j < len(pos) else 0
 
     return x, y
 
