@@ -57,15 +57,15 @@ def test_initialization(beam_files):
     linear_beam = DynamicEulerBernoulliBeam(linear_file)
     assert linear_beam is not None
     assert len(linear_beam.params) == 4
-    assert not linear_beam.linear_params.empty
-    assert linear_beam.nonlinear_params.empty
+    assert linear_beam.beam_model is not None
+    assert (linear_beam.params["type"] == "linear").all()
 
     # Test nonlinear beam
     nonlinear_beam = DynamicEulerBernoulliBeam(nonlinear_file)
     assert nonlinear_beam is not None
     assert len(nonlinear_beam.params) == 4
-    assert nonlinear_beam.linear_params.empty
-    assert not nonlinear_beam.nonlinear_params.empty
+    assert nonlinear_beam.beam_model is not None
+    assert (nonlinear_beam.params["type"] == "nonlinear").all()
 
 
 def test_fluid_params_initialization(beam_files):
@@ -158,9 +158,7 @@ def test_system_creation(beam_files):
     assert callable(nonlinear_system)
 
     # Test with constant force inputs
-    n_states = (
-        len(linear_beam.linear_params) * 3
-    )  # 3 DOFs per node for linear model now
+    n_states = linear_beam.beam_model.M.shape[0]  # DOFs from mass matrix
     x0_linear = np.zeros(2 * n_states)
     u_linear = np.ones(n_states)
 
@@ -168,7 +166,7 @@ def test_system_creation(beam_files):
     assert isinstance(dx_linear, np.ndarray)
     assert dx_linear.shape == x0_linear.shape
 
-    n_states = len(nonlinear_beam.nonlinear_params) * 3
+    n_states = nonlinear_beam.beam_model.M.shape[0]
     x0_nonlinear = np.zeros(2 * n_states)
     u_nonlinear = np.ones(n_states)
 
@@ -214,9 +212,7 @@ def test_solve_ivp_integration(beam_files):
     linear_beam.create_input_func()
     linear_system = linear_beam.get_dynamic_system()
 
-    n_states = (
-        len(linear_beam.linear_params) * 3
-    )  # 3 DOFs per node for linear model now
+    n_states = linear_beam.beam_model.M.shape[0]  # 3 DOFs per node for linear model now
     x0_linear = np.zeros(2 * n_states)
 
     def u_linear(t):
@@ -236,7 +232,7 @@ def test_solve_ivp_integration(beam_files):
     nonlinear_beam.create_input_func()
     nonlinear_system = nonlinear_beam.get_dynamic_system()
 
-    n_states = len(nonlinear_beam.nonlinear_params) * 3
+    n_states = nonlinear_beam.beam_model.M.shape[0]
     x0_nonlinear = np.zeros(2 * n_states)
 
     def u_nonlinear(t):
@@ -265,9 +261,7 @@ def test_solve_linear_beam_ivp_with_fluid(beam_files):
     linear_beam.create_input_func()
     linear_system = linear_beam.get_dynamic_system()
 
-    n_states = (
-        len(linear_beam.linear_params) * 3
-    )  # 3 DOFs per node for linear model now
+    n_states = linear_beam.beam_model.M.shape[0]  # 3 DOFs per node for linear model now
     x0_linear = np.zeros(2 * n_states)
 
     def u_linear(t):
@@ -293,8 +287,8 @@ def test_solve_linear_beam_ivp_with_fluid(beam_files):
     assert not np.allclose(sol_linear.y[:, -1], sol_no_fluid.y[:, -1])
 
 
-def test_mixed_system_error():
-    """Test error raised for mixed linear/nonlinear system."""
+def test_mixed_system_support():
+    """Test that mixed linear/nonlinear systems are now supported."""
     # Create mixed system file
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csv") as f:
         f.write(
@@ -307,11 +301,19 @@ def test_mixed_system_error():
         for p in params:
             f.write(f"{','.join(str(x) for x in p)}\n")
 
+    # Mixed systems should now work with unified beam
     beam = DynamicEulerBernoulliBeam(f.name)
-    with pytest.raises(
-        ValueError, match="Mixed linear/nonlinear systems not currently supported"
-    ):
-        beam.create_system_func()
+
+    # Should have unified beam model for mixed system
+    assert beam.beam_model is not None
+
+    # Should be able to create system functions without error
+    beam.create_system_func()
+    beam.create_input_func()
+
+    # Should have working system function
+    system_func = beam.get_system_func()
+    assert callable(system_func)
 
     os.unlink(f.name)
 
@@ -332,7 +334,7 @@ def test_solve_nonlinear_with_fluid(beam_files):
     nonlinear_beam_fluid.create_input_func()
     nonlinear_system_fluid = nonlinear_beam_fluid.get_dynamic_system()
 
-    n_states = len(nonlinear_beam_fluid.nonlinear_params) * 3
+    n_states = nonlinear_beam_fluid.beam_model.M.shape[0]
     x0_nonlinear = np.zeros(2 * n_states)
 
     def u_nonlinear(t):

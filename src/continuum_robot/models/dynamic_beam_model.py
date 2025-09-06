@@ -6,11 +6,8 @@ from scipy.sparse.linalg import inv
 import pathlib
 from enum import Enum
 
-from .linear_euler_bernoulli_beam import (
-    LinearEulerBernoulliBeam,
-    BoundaryConditionType,
-)
-from .nonlinear_euler_bernoulli_beam import NonlinearEulerBernoulliBeam
+from .linear_euler_bernoulli_beam import BoundaryConditionType
+from .euler_bernoulli_beam import EulerBernoulliBeam
 
 
 class ElementType(Enum):
@@ -74,50 +71,18 @@ class DynamicEulerBernoulliBeam:
         self.params = pd.read_csv(filename)
         self._validate_parameters()
 
-        # Split elements by type
-        linear_mask = self.params["type"].str.lower() == ElementType.LINEAR.value
-        self.linear_params = self.params[linear_mask].copy()
-        self.nonlinear_params = self.params[~linear_mask].copy()
-
         # Create boundary conditions dictionary
         self.boundary_conditions = self._process_boundary_conditions()
 
-        # Store information about constrained DOFs
-        self.linear_constrained_dofs = None
-        self.nonlinear_constrained_dofs = None
+        # Always use unified beam model
+        self.beam_model = EulerBernoulliBeam(self.params)
+        self.beam_model.apply_boundary_conditions(self.boundary_conditions)
 
-        # Store mass matrix inverses for efficiency
-        self.linear_M_inv = None
-        self.nonlinear_M_inv = None
+        # Store constrained DOFs
+        self.constrained_dofs = self.beam_model.get_constrained_dofs()
 
-        # Initialize beam models if elements exist
-        self.linear_model = None
-        if not self.linear_params.empty:
-            self.linear_model = LinearEulerBernoulliBeam(
-                self.linear_params, damping_ratio
-            )
-            self.linear_model.apply_boundary_conditions(self.boundary_conditions)
-
-            # Store constrained DOFs
-            self.linear_constrained_dofs = self.linear_model.get_constrained_dofs()
-
-            # Precompute mass matrix inverse
-            self.linear_M_inv = inv(self.linear_model.M)
-
-        self.nonlinear_model = None
-        if not self.nonlinear_params.empty:
-            self.nonlinear_model = NonlinearEulerBernoulliBeam(self.nonlinear_params)
-            self.nonlinear_model.create_mass_matrix()
-            self.nonlinear_model.create_stiffness_function()
-            self.nonlinear_model.apply_boundary_conditions(self.boundary_conditions)
-
-            # Store constrained DOFs
-            self.nonlinear_constrained_dofs = (
-                self.nonlinear_model.get_constrained_dofs()
-            )
-
-            # Precompute mass matrix inverse
-            self.nonlinear_M_inv = inv(self.nonlinear_model.M)
+        # Precompute mass matrix inverse for efficiency
+        self.M_inv = inv(self.beam_model.M)
 
         # Initialize system functions
         self.system_func = None
@@ -186,39 +151,21 @@ class DynamicEulerBernoulliBeam:
         self.state_to_node_param = {}  # Maps state index to (parameter, node) pair
         self.node_param_to_state = {}  # Maps (parameter, node) pair to state index
 
-        if self.linear_model:
-            # Get position mapping from linear model
-            pos_mapping = self.linear_model.dof_to_node_param
-            n_dofs = len(pos_mapping)
+        # Get position mapping from unified beam model
+        pos_mapping = self.beam_model.dof_to_node_param
+        n_dofs = len(pos_mapping)
 
-            # Create position part of mapping
-            for dof_idx, (param, node) in pos_mapping.items():
-                self.state_to_node_param[dof_idx] = (param, node)
-                self.node_param_to_state[(param, node)] = dof_idx
+        # Create position part of mapping
+        for dof_idx, (param, node) in pos_mapping.items():
+            self.state_to_node_param[dof_idx] = (param, node)
+            self.node_param_to_state[(param, node)] = dof_idx
 
-            # Create velocity part of mapping
-            for dof_idx, (param, node) in pos_mapping.items():
-                vel_idx = dof_idx + n_dofs
-                vel_param = f"d{param}_dt"  # e.g., "w" becomes "dw_dt"
-                self.state_to_node_param[vel_idx] = (vel_param, node)
-                self.node_param_to_state[(vel_param, node)] = vel_idx
-
-        elif self.nonlinear_model:
-            # Get position mapping from nonlinear model
-            pos_mapping = self.nonlinear_model.dof_to_node_param
-            n_dofs = len(pos_mapping)
-
-            # Create position part of mapping
-            for dof_idx, (param, node) in pos_mapping.items():
-                self.state_to_node_param[dof_idx] = (param, node)
-                self.node_param_to_state[(param, node)] = dof_idx
-
-            # Create velocity part of mapping
-            for dof_idx, (param, node) in pos_mapping.items():
-                vel_idx = dof_idx + n_dofs
-                vel_param = f"d{param}_dt"  # e.g., "u" becomes "du_dt"
-                self.state_to_node_param[vel_idx] = (vel_param, node)
-                self.node_param_to_state[(vel_param, node)] = vel_idx
+        # Create velocity part of mapping
+        for dof_idx, (param, node) in pos_mapping.items():
+            vel_idx = dof_idx + n_dofs
+            vel_param = f"d{param}_dt"  # e.g., "w" becomes "dw_dt"
+            self.state_to_node_param[vel_idx] = (vel_param, node)
+            self.node_param_to_state[(vel_param, node)] = vel_idx
 
         # Store original mappings for when boundary conditions are cleared/reapplied
         self._original_state_to_node_param = self.state_to_node_param.copy()
@@ -350,136 +297,70 @@ class DynamicEulerBernoulliBeam:
         }
 
     def create_system_func(self) -> None:
-        """Create system matrix function A(x).
+        """Create system matrix function A(x) using unified beam model."""
+        M_inv = self.M_inv
 
-        Creates specialized system function based on model type:
-        - Linear only: Uses standard state-space form
-        - Nonlinear only: Uses nonlinear stiffness function
-        - Mixed is not currently supported
+        if self.fluid_params.enable_fluid_effects and self.fluid_coefficients:
+            # Get precomputed coefficients
+            w_vel_indices = self.fluid_coefficients["w_vel_indices"]
+            w_pos_indices = self.fluid_coefficients["w_pos_indices"]
+            drag_factors = self.fluid_coefficients["drag_factors"]
 
-        Raises:
-            ValueError: If both linear and nonlinear models exist
-        """
-        if self.linear_model and self.nonlinear_model:
-            raise ValueError("Mixed linear/nonlinear systems not currently supported")
+            def system_with_fluid(x):
+                n_states = len(x) // 2
+                positions = x[:n_states]
+                velocities = x[n_states:]
 
-        if self.linear_model:
-            # Create linear state space system
-            n = self.linear_model.M.shape[0]
-            M_inv = self.linear_M_inv
-            A = sparse.bmat(
-                [
-                    [None, sparse.eye(n)],
-                    [-M_inv.dot(self.linear_model.K), -M_inv.dot(self.linear_model.C)],
-                ],
-                format="csr",
-            )
+                # Calculate stiffness forces using unified beam model
+                k_x = self.beam_model.get_stiffness_function()(positions)
 
-            if self.fluid_params.enable_fluid_effects and self.fluid_coefficients:
-                # Get precomputed coefficients
-                n_pos_states = self.fluid_coefficients["n_pos_states"]
-                w_vel_indices = self.fluid_coefficients["w_vel_indices"]
-                w_pos_indices = self.fluid_coefficients["w_pos_indices"]
-                drag_factors = self.fluid_coefficients["drag_factors"]
+                # Create drag forces vector (zeros initially)
+                drag_forces = np.zeros_like(velocities)
 
-                def system_with_fluid(x):
-                    # Apply base linear system
-                    result = A.dot(x)
+                # Apply drag forces based on transverse velocities
+                for i in range(len(w_vel_indices)):
+                    if i < len(drag_factors) and i < len(w_pos_indices):
+                        vel_idx = w_vel_indices[i]
+                        pos_idx = w_pos_indices[i]
+                        # Calculate relative position in velocities array
+                        force_idx = pos_idx
+                        vel = x[vel_idx]
+                        drag_factor = drag_factors[i]
+                        # Nonlinear drag proportional to velocity^2
+                        drag_force = -drag_factor * vel * np.abs(vel)
+                        # Apply force at the position index
+                        drag_forces[force_idx] = drag_force
 
-                    # Create drag forces vector (zeros initially)
-                    drag_forces = np.zeros(n_pos_states)
+                # Combine position derivatives (velocities) with
+                # velocity derivatives (accelerations = forces/mass)
+                return np.concatenate(
+                    [
+                        velocities,
+                        -M_inv.dot(k_x) + M_inv.dot(drag_forces),
+                    ]
+                )
 
-                    # Apply drag forces based on transverse velocities
-                    for i in range(len(w_vel_indices)):
-                        if i < len(drag_factors) and i < len(w_pos_indices):
-                            vel_idx = w_vel_indices[i]
-                            pos_idx = w_pos_indices[i]
-                            vel = x[vel_idx]
-                            drag_factor = drag_factors[i]
-                            # Nonlinear drag proportional to velocity^2
-                            drag_force = -drag_factor * vel * np.abs(vel)
-                            # Apply force to the position index
-                            drag_forces[pos_idx] = drag_force
-
-                    # Add drag forces to acceleration terms through mass matrix inverse
-                    result[n_pos_states:] += M_inv.dot(drag_forces)
-
-                    return result
-
-                self.system_func = system_with_fluid
-            else:
-                self.system_func = lambda x: A.dot(x)
-
-        elif self.nonlinear_model:
-            # Create nonlinear system
-            M_inv = self.nonlinear_M_inv
-
-            if self.fluid_params.enable_fluid_effects and self.fluid_coefficients:
-                # Get precomputed coefficients
-                n_pos_states = self.fluid_coefficients["n_pos_states"]
-                w_vel_indices = self.fluid_coefficients["w_vel_indices"]
-                w_pos_indices = self.fluid_coefficients["w_pos_indices"]
-                drag_factors = self.fluid_coefficients["drag_factors"]
-
-                def nonlinear_system_with_fluid(x):
-                    n = len(x) // 2
-                    positions = x[:n]
-                    velocities = x[n:]
-
-                    # Calculate nonlinear stiffness forces
-                    k_x = self.nonlinear_model.get_stiffness_function()(positions)
-
-                    # Create drag forces vector (zeros initially)
-                    drag_forces = np.zeros_like(velocities)
-
-                    # Apply drag forces based on transverse velocities
-                    for i in range(len(w_vel_indices)):
-                        if i < len(drag_factors) and i < len(w_pos_indices):
-                            vel_idx = w_vel_indices[i]
-                            pos_idx = w_pos_indices[i]
-                            # Calculate relative position in velocities array
-                            force_idx = pos_idx
-                            vel = x[vel_idx]
-                            drag_factor = drag_factors[i]
-                            # Nonlinear drag proportional to velocity^2
-                            drag_force = -drag_factor * vel * np.abs(vel)
-                            # Apply force at the position index
-                            drag_forces[force_idx] = drag_force
-                    # Combine position derivatives (velocities) with
-                    # velocity derivatives (accelerations = forces/mass)
-                    return np.concatenate(
-                        [
-                            velocities,
-                            -M_inv.dot(k_x) + M_inv.dot(drag_forces),
-                        ]
-                    )
-
-                self.system_func = nonlinear_system_with_fluid
-            else:
-
-                def nonlinear_system(x):
-                    n = len(x) // 2
-                    positions = x[:n]
-                    velocities = x[n:]
-
-                    # Calculate stiffness forces
-                    k_x = self.nonlinear_model.get_stiffness_function()(positions)
-
-                    return np.concatenate([velocities, -M_inv.dot(k_x)])
-
-                self.system_func = nonlinear_system
+            self.system_func = system_with_fluid
         else:
-            raise ValueError("No model types defined")
+
+            def system(x):
+                n_states = len(x) // 2
+                positions = x[:n_states]
+                velocities = x[n_states:]
+
+                # Calculate stiffness forces using unified beam model
+                k_x = self.beam_model.get_stiffness_function()(positions)
+
+                return np.concatenate([velocities, -M_inv.dot(k_x)])
+
+            self.system_func = system
 
     def create_input_func(self) -> None:
-        """Create input matrix function B(x)."""
+        """Create input matrix function B(x) using unified beam model."""
 
         def input_function(x: np.ndarray) -> np.ndarray:
             n = len(x) // 2
-            if self.linear_model:
-                M_inv = self.linear_M_inv
-            else:
-                M_inv = self.nonlinear_M_inv
+            M_inv = self.M_inv
 
             B = sparse.bmat([[sparse.csr_matrix((n, n))], [M_inv]], format="csr")
             return B
