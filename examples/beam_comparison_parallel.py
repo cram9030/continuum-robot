@@ -26,18 +26,16 @@ class SimulationTask:
     """Container for a single simulation task."""
 
     name: str
-    linear_file: str
-    nonlinear_file: str
+    param_file: str
     fluid_params: Optional[FluidDynamicsParams]
-    is_linear: bool
 
 
-def create_beam_parameters() -> Tuple[str, str]:
+def create_beam_parameters() -> Tuple[str, str, str]:
     """
-    Create CSV files with beam parameters for both linear and nonlinear models.
+    Create CSV files with beam parameters for linear, nonlinear, and mixed models.
 
     Returns:
-        tuple: (linear_file_path, nonlinear_file_path)
+        tuple: (linear_file_path, nonlinear_file_path, mixed_file_path)
     """
     # Create linear beam file
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csv") as f:
@@ -81,7 +79,29 @@ def create_beam_parameters() -> Tuple[str, str]:
 
         nonlinear_file = f.name
 
-    return linear_file, nonlinear_file
+    # Create mixed beam file: Linear base segments, nonlinear tip segments
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csv") as f:
+        f.write(
+            "length,elastic_modulus,moment_inertia,density,cross_area,type,boundary_condition,wetted_area,drag_coef\n"
+        )
+
+        # First half linear, second half nonlinear
+        mixed_types = ["linear"] * (N_SEGMENTS // 2) + ["nonlinear"] * (
+            N_SEGMENTS - N_SEGMENTS // 2
+        )
+        boundary_conditions = ["FIXED"] + ["NONE"] * (N_SEGMENTS - 1)
+
+        params = [
+            (length, E, MInertia, rho, A, seg_type, bc, wetted_area, drag_coef)
+            for seg_type, bc in zip(mixed_types, boundary_conditions)
+        ]
+
+        for p in params:
+            f.write(f"{','.join(str(x) for x in p)}\n")
+
+        mixed_file = f.name
+
+    return linear_file, nonlinear_file, mixed_file
 
 
 def simulate_single_beam(task: SimulationTask) -> Tuple[str, Any, float]:
@@ -97,22 +117,16 @@ def simulate_single_beam(task: SimulationTask) -> Tuple[str, Any, float]:
     """
     start_time = time.time()
 
-    # Select appropriate file based on beam type
-    param_file = task.linear_file if task.is_linear else task.nonlinear_file
-
-    # Initialize beam model
-    beam = DynamicEulerBernoulliBeam(param_file, fluid_params=task.fluid_params)
+    # Initialize beam model with the provided parameter file
+    beam = DynamicEulerBernoulliBeam(task.param_file, fluid_params=task.fluid_params)
     beam.create_system_func()
     beam.create_input_func()
 
     # Set up simulation parameters
     t_span = (0, T_FINAL)
 
-    # Get initial conditions
-    if beam.linear_model is not None:
-        n_states = beam.linear_model.M.shape[0]
-    else:
-        n_states = beam.nonlinear_model.M.shape[0]
+    # Get initial conditions from unified beam model
+    n_states = beam.beam_model.M.shape[0]
 
     x0 = np.zeros(2 * n_states)
 
@@ -160,9 +174,14 @@ def extract_beam_shapes(
 
     for i in range(len(sol.t)):
         if linear:
-            pos = sol.y[n_pos::2, i]
+            # For linear beam with 3 DOFs per node (u, w, phi)
+            # State vector layout: [u1, w1, phi1, u2, w2, phi2, ..., du1_dt, dw1_dt, dphi1_dt, ...]
+            # We want w components which are at indices 1, 4, 7, 10, ... (1 + 3*j)
+            pos = sol.y[n_pos + 1 :: 3, i]  # Extract w (transverse) displacements
         else:
-            pos = sol.y[n_pos + 1 :: 3, i]
+            # For nonlinear beam with 3 DOFs per node (u, w, phi)
+            # Same indexing as linear now
+            pos = sol.y[n_pos + 1 :: 3, i]  # Extract w (transverse) displacements
 
         x[i, 0] = 0  # Fixed base
         y[i, 0] = 0
@@ -185,7 +204,7 @@ def main():
     print("-" * 60)
 
     # Create parameter files
-    linear_file, nonlinear_file = create_beam_parameters()
+    linear_file, nonlinear_file, mixed_file = create_beam_parameters()
 
     try:
         # Create fluid dynamics parameters
@@ -195,17 +214,13 @@ def main():
 
         # Define all simulation tasks
         tasks = [
+            SimulationTask("Linear (No Fluid)", linear_file, None),
+            SimulationTask("Linear (Fluid)", linear_file, fluid_params),
+            SimulationTask("Nonlinear (No Fluid)", nonlinear_file, None),
+            SimulationTask("Nonlinear (Fluid)", nonlinear_file, fluid_params),
+            SimulationTask("Mixed Lin-Base/Nonlin-Tip (No Fluid)", mixed_file, None),
             SimulationTask(
-                "Linear (No Fluid)", linear_file, nonlinear_file, None, True
-            ),
-            SimulationTask(
-                "Linear (Fluid)", linear_file, nonlinear_file, fluid_params, True
-            ),
-            SimulationTask(
-                "Nonlinear (No Fluid)", linear_file, nonlinear_file, None, False
-            ),
-            SimulationTask(
-                "Nonlinear (Fluid)", linear_file, nonlinear_file, fluid_params, False
+                "Mixed Lin-Base/Nonlin-Tip (Fluid)", mixed_file, fluid_params
             ),
         ]
 
@@ -213,7 +228,7 @@ def main():
         print("Starting parallel simulations...")
         overall_start = time.time()
 
-        with Pool(processes=min(4, cpu_count())) as pool:
+        with Pool(processes=min(6, cpu_count())) as pool:
             results = pool.map(simulate_single_beam, tasks)
 
         overall_time = time.time() - overall_start
@@ -240,14 +255,13 @@ def main():
         print("\nExtracting beam shapes...")
         shapes = {}
 
-        # Determine dx based on model type
-        dx_lin = 1.5 / N_SEGMENTS  # Total length / segments
-        dx_nonlin = 1.5 / N_SEGMENTS
+        # All models use the same segment length in unified architecture
+        dx = 1.5 / N_SEGMENTS  # Total beam length / segments
 
         for name, sol in solutions.items():
-            is_linear = "Linear" in name
-            dx = dx_lin if is_linear else dx_nonlin
-            x, y = extract_beam_shapes(sol, N_SEGMENTS, dx, linear=is_linear)
+            x, y = extract_beam_shapes(
+                sol, N_SEGMENTS, dx, linear=False
+            )  # Use consistent indexing
             shapes[name] = (x, y)
 
         # Create visualization
@@ -270,14 +284,23 @@ def main():
 
         # Create lines for animation
         lines = {}
-        colors = {"Linear": "b", "Nonlinear": "r"}
+        colors = {"Linear": "b", "Nonlinear": "r", "Mixed Lin-Base/Nonlin-Tip": "g"}
         styles = {"No Fluid": "-", "Fluid": "--"}
 
         for name, (x, y) in shapes.items():
-            beam_type = "Linear" if "Linear" in name else "Nonlinear"
+            # Determine beam type from name
+            if "Linear" in name and "Mixed" not in name:
+                beam_type = "Linear"
+            elif "Nonlinear" in name and "Mixed" not in name:
+                beam_type = "Nonlinear"
+            elif "Lin-Base/Nonlin-Tip" in name:
+                beam_type = "Mixed Lin-Base/Nonlin-Tip"
+            else:
+                beam_type = "Linear"  # fallback
+
             fluid_type = "Fluid" if "Fluid" in name else "No Fluid"
 
-            color = colors[beam_type]
+            color = colors.get(beam_type, "black")
             style = styles[fluid_type]
 
             (line,) = ax1.plot(
@@ -289,10 +312,19 @@ def main():
 
         # Tip displacement plot
         for name, (x, y) in shapes.items():
-            beam_type = "Linear" if "Linear" in name else "Nonlinear"
+            # Determine beam type from name (same logic as above)
+            if "Linear" in name and "Mixed" not in name:
+                beam_type = "Linear"
+            elif "Nonlinear" in name and "Mixed" not in name:
+                beam_type = "Nonlinear"
+            elif "Lin-Base/Nonlin-Tip" in name:
+                beam_type = "Mixed Lin-Base/Nonlin-Tip"
+            else:
+                beam_type = "Linear"  # fallback
+
             fluid_type = "Fluid" if "Fluid" in name else "No Fluid"
 
-            color = colors[beam_type]
+            color = colors.get(beam_type, "black")
             style = styles[fluid_type]
 
             ax2.plot(
@@ -334,8 +366,9 @@ def main():
 
     finally:
         # Cleanup temporary files
-        os.unlink(linear_file)
-        os.unlink(nonlinear_file)
+        for temp_file in [linear_file, nonlinear_file, mixed_file]:
+            if os.path.exists(temp_file):
+                os.unlink(temp_file)
         print("\nTemporary files cleaned up")
 
 

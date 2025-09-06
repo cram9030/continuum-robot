@@ -1,3 +1,9 @@
 from .dynamic_beam_model import DynamicEulerBernoulliBeam
-from .linear_euler_bernoulli_beam import LinearEulerBernoulliBeam
-from .nonlinear_euler_bernoulli_beam import NonlinearEulerBernoulliBeam
+from .euler_bernoulli_beam import EulerBernoulliBeam
+from .abstractions import (
+    IBeam,
+    ISegment,
+    Properties,
+    ElementType,
+    BoundaryConditionType,
+)
