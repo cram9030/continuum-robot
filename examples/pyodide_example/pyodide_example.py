@@ -51,7 +51,7 @@ def run_simulation():
     beam.create_input_func()
 
     # Setup initial conditions
-    n_states = beam.linear_model.M.shape[0]
+    n_states = beam.beam_model.M.shape[0]
     x0 = np.zeros(2 * n_states)
 
     # Define time points
@@ -75,7 +75,7 @@ def run_simulation():
     )
 
     # Extract beam shapes
-    dx = beam.linear_model.get_length() / N_SEGMENTS
+    dx = 1.5 / N_SEGMENTS  # Total beam length / segments
     n_pos = len(sol.y) // 2
     n_points = N_SEGMENTS + 1
 
