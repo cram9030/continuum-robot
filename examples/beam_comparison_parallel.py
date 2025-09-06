@@ -160,9 +160,14 @@ def extract_beam_shapes(
 
     for i in range(len(sol.t)):
         if linear:
-            pos = sol.y[n_pos::2, i]
+            # For linear beam with 3 DOFs per node (u, w, phi)
+            # State vector layout: [u1, w1, phi1, u2, w2, phi2, ..., du1_dt, dw1_dt, dphi1_dt, ...]
+            # We want w components which are at indices 1, 4, 7, 10, ... (1 + 3*j)
+            pos = sol.y[n_pos + 1 :: 3, i]  # Extract w (transverse) displacements
         else:
-            pos = sol.y[n_pos + 1 :: 3, i]
+            # For nonlinear beam with 3 DOFs per node (u, w, phi)
+            # Same indexing as linear now
+            pos = sol.y[n_pos + 1 :: 3, i]  # Extract w (transverse) displacements
 
         x[i, 0] = 0  # Fixed base
         y[i, 0] = 0

@@ -158,7 +158,9 @@ def test_system_creation(beam_files):
     assert callable(nonlinear_system)
 
     # Test with constant force inputs
-    n_states = len(linear_beam.linear_params) * 2
+    n_states = (
+        len(linear_beam.linear_params) * 3
+    )  # 3 DOFs per node for linear model now
     x0_linear = np.zeros(2 * n_states)
     u_linear = np.ones(n_states)
 
@@ -212,7 +214,9 @@ def test_solve_ivp_integration(beam_files):
     linear_beam.create_input_func()
     linear_system = linear_beam.get_dynamic_system()
 
-    n_states = len(linear_beam.linear_params) * 2
+    n_states = (
+        len(linear_beam.linear_params) * 3
+    )  # 3 DOFs per node for linear model now
     x0_linear = np.zeros(2 * n_states)
 
     def u_linear(t):
@@ -261,7 +265,9 @@ def test_solve_linear_beam_ivp_with_fluid(beam_files):
     linear_beam.create_input_func()
     linear_system = linear_beam.get_dynamic_system()
 
-    n_states = len(linear_beam.linear_params) * 2
+    n_states = (
+        len(linear_beam.linear_params) * 3
+    )  # 3 DOFs per node for linear model now
     x0_linear = np.zeros(2 * n_states)
 
     def u_linear(t):
@@ -420,18 +426,18 @@ def test_state_mapping_initialization(beam_files):
     # For linear beam with 4 segments and fixed boundary condition at node 0:
     # - We have 5 nodes total
     # - Node 0 has boundary conditions (fixed), so it is removed
-    # - 4 nodes remain, each with 2 DOFs (w, phi) = 8 position DOFs
-    # - Total state size is 2 * 8 = 16 (8 positions + 8 velocities)
-    assert len(linear_beam.state_to_node_param) == 16
+    # - 4 nodes remain, each with 3 DOFs (u, w, phi) = 12 position DOFs
+    # - Total state size is 2 * 12 = 24 (12 positions + 12 velocities)
+    assert len(linear_beam.state_to_node_param) == 24
 
     # Check mappings for positions and velocities
-    for i in range(8):  # 8 position states
+    for i in range(12):  # 12 position states
         param, node = linear_beam.state_to_node_param[i]
-        assert param in ["w", "phi"]  # Either displacement or rotation
+        assert param in ["u", "w", "phi"]  # Axial, transverse, or rotation
 
-    for i in range(8, 16):  # 8 velocity states
+    for i in range(12, 24):  # 12 velocity states
         param, node = linear_beam.state_to_node_param[i]
-        assert param in ["dw_dt", "dphi_dt"]  # Velocity of displacement or rotation
+        assert param in ["du_dt", "dw_dt", "dphi_dt"]  # Velocity components
 
     # Test nonlinear beam state mapping
     nonlinear_beam = DynamicEulerBernoulliBeam(nonlinear_file)
@@ -492,15 +498,20 @@ def test_state_mapping_with_boundary_conditions(beam_files):
     beam = DynamicEulerBernoulliBeam(linear_file)
 
     # First node (0) already has fixed boundary condition, check 2nd and 3rd nodes
+    node1_u_pos_idx = beam.get_state_index(1, "u")
     node1_w_pos_idx = beam.get_state_index(1, "w")
+    node1_u_vel_idx = beam.get_state_index(1, "du_dt")
     node1_w_vel_idx = beam.get_state_index(1, "dw_dt")
 
-    # Check that w and dw_dt for node 1 are correctly mapped
+    # Check that u, w and du_dt, dw_dt for node 1 are correctly mapped
+    assert beam.get_state_to_node_param(node1_u_pos_idx) == ("u", 1)
     assert beam.get_state_to_node_param(node1_w_pos_idx) == ("w", 1)
+    assert beam.get_state_to_node_param(node1_u_vel_idx) == ("du_dt", 1)
     assert beam.get_state_to_node_param(node1_w_vel_idx) == ("dw_dt", 1)
 
     # The state indices should be offset by n_pos_states
     n_pos_states = len(beam.state_to_node_param) // 2
+    assert node1_u_vel_idx == node1_u_pos_idx + n_pos_states
     assert node1_w_vel_idx == node1_w_pos_idx + n_pos_states
 
 
@@ -569,4 +580,4 @@ def test_state_mapping_errors(beam_files):
 
     # Test invalid node
     with pytest.raises(KeyError):
-        beam.get_state_index(100, "w")
+        beam.get_state_index(100, "u")

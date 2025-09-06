@@ -160,12 +160,12 @@ def test_stiffness_matrix(nitinol_file: str):
 
     # Check matrix properties
     assert isinstance(K, np.ndarray)
-    assert K.shape == (10, 10)  # 4 segments = 10x10 matrix
+    assert K.shape == (15, 15)  # 4 segments = 15x15 matrix (5 nodes × 3 DOFs)
     assert np.allclose(K, K.T)  # Should be symmetric
 
     # Test single segment retrieval
     K_segment = beam.get_segment_stiffness(0)
-    assert K_segment.shape == (4, 4)
+    assert K_segment.shape == (6, 6)  # 6x6 for 3-DOF nodes
     assert np.allclose(K_segment, K_segment.T)  # Should be symmetric
 
 
@@ -179,12 +179,12 @@ def test_mass_matrix(nitinol_file: str):
 
     # Check matrix properties
     assert isinstance(M, np.ndarray)
-    assert M.shape == (10, 10)  # 4 segments = 10x10 matrix
+    assert M.shape == (15, 15)  # 4 segments = 15x15 matrix (5 nodes × 3 DOFs)
     assert np.allclose(M, M.T)  # Should be symmetric
 
     # Test single segment retrieval
     M_segment = beam.get_segment_mass(0)
-    assert M_segment.shape == (4, 4)
+    assert M_segment.shape == (6, 6)  # 6x6 for 3-DOF nodes
     assert np.allclose(M_segment, M_segment.T)  # Should be symmetric
 
 
@@ -239,8 +239,8 @@ def test_matrix_values(nitinol_file: str):
     eigenvals = np.linalg.eigvals(M)
     assert np.all(eigenvals >= 0)
 
-    # Remove the first two rows and first two columns of the stiffness matrix to emulate a cantilever beam boundary condition
-    K_reduced = K[2:, 2:]
+    # Remove the first three rows and first three columns of the stiffness matrix to emulate a cantilever beam boundary condition
+    K_reduced = K[3:, 3:]
     eigenvals = np.linalg.eigvals(K_reduced)
     assert np.all(eigenvals >= 0)
 
@@ -263,21 +263,21 @@ def test_multiple_boundary_conditions(beam_fixture):
 
     # Apply multiple boundary conditions
     conditions = {
-        0: BoundaryConditionType.FIXED,  # Constrains DOFs 0,1
-        2: BoundaryConditionType.PINNED,  # Constrains DOF 4
+        0: BoundaryConditionType.FIXED,  # Constrains DOFs 0,1,2
+        2: BoundaryConditionType.PINNED,  # Constrains DOF 6,7
     }
     beam.apply_boundary_conditions(conditions)
 
     # Check matrices were reduced
     K = beam.get_stiffness_matrix()
     M = beam.get_mass_matrix()
-    expected_size = orig_size - 3  # Removed 3 DOFs
+    expected_size = orig_size - 5  # Removed 5 DOFs (3 for FIXED + 2 for PINNED)
     assert K.shape == (expected_size, expected_size)
     assert M.shape == (expected_size, expected_size)
 
     # Check constrained DOFs
     constrained = beam.get_constrained_dofs()
-    assert constrained == {0, 1, 4}
+    assert constrained == {0, 1, 2, 6, 7}
 
 
 def test_clear_boundary_conditions(beam_fixture):
@@ -332,9 +332,9 @@ def test_matrix_reduction(beam_fixture):
     K = beam.get_stiffness_matrix()
     M = beam.get_mass_matrix()
 
-    # Should have removed 2 DOFs
-    assert K.shape[0] == K_orig.shape[0] - 2
-    assert M.shape[0] == M_orig.shape[0] - 2
+    # Should have removed 3 DOFs (FIXED boundary condition)
+    assert K.shape[0] == K_orig.shape[0] - 3
+    assert M.shape[0] == M_orig.shape[0] - 3
 
     # Check remaining matrix is properly formed
     assert np.all(K.diagonal() != 0)  # No zero diagonal entries
@@ -348,7 +348,7 @@ def test_damping_matrix_creation(nitinol_file: str):
     # Check matrix properties
     C = beam.get_mass_damping()
     assert isinstance(C, np.ndarray)
-    assert C.shape == (10, 10)  # 4 segments = 10x10 matrix
+    assert C.shape == (15, 15)  # 4 segments = 15x15 matrix (5 nodes × 3 DOFs)
 
 
 def test_invalid_damping_ratio(nitinol_file: str):
@@ -374,8 +374,8 @@ def test_damping_matrix_boundary_conditions(beam_fixture):
     # Check reduced matrix
     C = beam.get_mass_damping()
 
-    # Should have removed 2 DOFs
-    assert C.shape[0] == C_orig.shape[0] - 2
+    # Should have removed 3 DOFs (FIXED boundary condition)
+    assert C.shape[0] == C_orig.shape[0] - 3
     assert np.all(C.diagonal() != 0)  # No zero diagonal entries
 
     # Verify still symmetric and positive definite
@@ -424,21 +424,24 @@ def test_dof_mapping_initialization(valid_parameters):
     assert hasattr(beam, "dof_to_node_param")
     assert hasattr(beam, "node_param_to_dof")
 
-    # Check mapping for a 4-segment beam (5 nodes, 10 DOFs)
-    assert len(beam.dof_to_node_param) == 10
-    assert len(beam.node_param_to_dof) == 10
+    # Check mapping for a 4-segment beam (5 nodes, 15 DOFs)
+    assert len(beam.dof_to_node_param) == 15
+    assert len(beam.node_param_to_dof) == 15
 
     # Check first node mappings
-    assert beam.dof_to_node_param[0] == ("w", 0)
-    assert beam.dof_to_node_param[1] == ("phi", 0)
+    assert beam.dof_to_node_param[0] == ("u", 0)
+    assert beam.dof_to_node_param[1] == ("w", 0)
+    assert beam.dof_to_node_param[2] == ("phi", 0)
 
     # Check last node mappings
-    assert beam.dof_to_node_param[8] == ("w", 4)
-    assert beam.dof_to_node_param[9] == ("phi", 4)
+    assert beam.dof_to_node_param[12] == ("u", 4)
+    assert beam.dof_to_node_param[13] == ("w", 4)
+    assert beam.dof_to_node_param[14] == ("phi", 4)
 
     # Check reverse mappings
-    assert beam.node_param_to_dof[("w", 0)] == 0
-    assert beam.node_param_to_dof[("phi", 4)] == 9
+    assert beam.node_param_to_dof[("u", 0)] == 0
+    assert beam.node_param_to_dof[("w", 0)] == 1
+    assert beam.node_param_to_dof[("phi", 4)] == 14
 
 
 def test_dof_mapping_boundary_conditions(valid_parameters):
@@ -454,19 +457,21 @@ def test_dof_mapping_boundary_conditions(valid_parameters):
     beam.apply_boundary_conditions({0: BoundaryConditionType.FIXED})
 
     # Check mappings were updated
-    assert len(beam.dof_to_node_param) == 8  # Original 10 - 2 constrained DOFs
+    assert len(beam.dof_to_node_param) == 12  # Original 15 - 3 constrained DOFs
 
     # Check node 0 DOFs are no longer in the mapping values
+    assert ("u", 0) not in beam.dof_to_node_param.values()
     assert ("w", 0) not in beam.dof_to_node_param.values()
     assert ("phi", 0) not in beam.dof_to_node_param.values()
 
-    # Check that previously node 1 DOFs are now at indices 0 and 1
-    assert beam.dof_to_node_param[0] == orig_dof_to_node_param[2]  # w at node 1
-    assert beam.dof_to_node_param[1] == orig_dof_to_node_param[3]  # phi at node 1
+    # Check that previously node 1 DOFs are now at indices 0, 1, and 2
+    assert beam.dof_to_node_param[0] == orig_dof_to_node_param[3]  # u at node 1
+    assert beam.dof_to_node_param[1] == orig_dof_to_node_param[4]  # w at node 1
+    assert beam.dof_to_node_param[2] == orig_dof_to_node_param[5]  # phi at node 1
 
     # Test the accessor methods
-    assert beam.get_dof_to_node_param(0) == ("w", 1)
-    assert beam.get_dof_index(1, "w") == 0
+    assert beam.get_dof_to_node_param(0) == ("u", 1)
+    assert beam.get_dof_index(1, "u") == 0
 
 
 def test_dof_mapping_clear_boundary_conditions(valid_parameters):
@@ -483,13 +488,13 @@ def test_dof_mapping_clear_boundary_conditions(valid_parameters):
     beam.apply_boundary_conditions({0: BoundaryConditionType.FIXED})
 
     # Check mappings were updated
-    assert len(beam.dof_to_node_param) == 8
+    assert len(beam.dof_to_node_param) == 12
 
     # Clear boundary conditions
     beam.clear_boundary_conditions()
 
     # Check mappings were restored
-    assert len(beam.dof_to_node_param) == 10
+    assert len(beam.dof_to_node_param) == 15
     assert beam.dof_to_node_param == orig_dof_to_node_param
     assert beam.node_param_to_dof == orig_node_param_to_dof
 
@@ -502,25 +507,27 @@ def test_dof_mapping_multiple_boundary_conditions(valid_parameters):
 
     # Apply multiple boundary conditions
     conditions = {
-        0: BoundaryConditionType.FIXED,  # Constrains DOFs 0,1
-        2: BoundaryConditionType.PINNED,  # Constrains DOF 4
+        0: BoundaryConditionType.FIXED,  # Constrains DOFs 0,1,2
+        2: BoundaryConditionType.PINNED,  # Constrains DOF 6,7
     }
     beam.apply_boundary_conditions(conditions)
 
     # Check mappings were updated correctly
-    assert len(beam.dof_to_node_param) == 7  # Original 10 - 3 constrained DOFs
+    assert len(beam.dof_to_node_param) == 10  # Original 15 - 5 constrained DOFs
 
     # After remapping, we should have new DOFs starting from 0
     # Check that nodes 0 and 2's constrained DOFs are gone
+    assert ("u", 0) not in beam.dof_to_node_param.values()
     assert ("w", 0) not in beam.dof_to_node_param.values()
     assert ("phi", 0) not in beam.dof_to_node_param.values()
+    assert ("u", 2) not in beam.dof_to_node_param.values()
     assert ("w", 2) not in beam.dof_to_node_param.values()
 
     # Test accessor methods
-    assert beam.get_dof_to_node_param(0) == ("w", 1)
+    assert beam.get_dof_to_node_param(0) == ("u", 1)
 
-    # This would originally be DOF 5 (phi, 2), now it should be DOF 1
-    assert beam.get_dof_index(2, "phi") == 2
+    # This would originally be DOF 8 (phi, 2), now it should be DOF 3
+    assert beam.get_dof_index(2, "phi") == 3
 
 
 def test_dof_access_errors(valid_parameters):
@@ -537,4 +544,4 @@ def test_dof_access_errors(valid_parameters):
 
     # Test invalid node
     with pytest.raises(KeyError):
-        beam.get_dof_index(10, "w")
+        beam.get_dof_index(10, "u")

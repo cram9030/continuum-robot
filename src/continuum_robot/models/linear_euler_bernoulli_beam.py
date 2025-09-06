@@ -13,8 +13,8 @@ import warnings
 class BoundaryConditionType(Enum):
     """Enumeration of supported boundary condition types."""
 
-    FIXED = "fixed"  # Both displacement and rotation fixed
-    PINNED = "pinned"  # Displacement fixed, rotation free
+    FIXED = "fixed"  # All displacements and rotation fixed
+    PINNED = "pinned"  # All displacements fixed, rotation free
 
 
 class LinearEulerBernoulliBeam:
@@ -27,6 +27,9 @@ class LinearEulerBernoulliBeam:
 
     The matrices are stored internally as sparse matrices but returned as dense
     matrices through getter functions.
+
+    Each node has 3 degrees of freedom: u (axial displacement), w (transverse displacement),
+    and phi (rotation).
 
     Attributes:
         parameters (pd.DataFrame): Dataframe containing beam section parameters
@@ -169,21 +172,25 @@ class LinearEulerBernoulliBeam:
         Initialize the mapping between DOF indices and (parameter, node) pairs.
 
         For linear model:
-        - Each node has 2 DOFs: w (displacement) and phi (rotation)
-        - DOF indices are organized as [w1, phi1, w2, phi2, ..., wn, phin]
+        - Each node has 3 DOFs: u (axial displacement), w (transverse displacement), and phi (rotation)
+        - DOF indices are organized as [u1, w1, phi1, u2, w2, phi2, ..., un, wn, phin]
         """
         n_nodes = len(self.parameters) + 1
         self.dof_to_node_param = {}  # Maps DOF index to (parameter, node) pair
         self.node_param_to_dof = {}  # Maps (parameter, node) pair to DOF index
 
         for node in range(n_nodes):
-            # Displacement (w) at node
-            self.dof_to_node_param[2 * node] = ("w", node)
-            self.node_param_to_dof[("w", node)] = 2 * node
+            # Axial displacement (u) at node
+            self.dof_to_node_param[3 * node] = ("u", node)
+            self.node_param_to_dof[("u", node)] = 3 * node
+
+            # Transverse displacement (w) at node
+            self.dof_to_node_param[3 * node + 1] = ("w", node)
+            self.node_param_to_dof[("w", node)] = 3 * node + 1
 
             # Rotation (phi) at node
-            self.dof_to_node_param[2 * node + 1] = ("phi", node)
-            self.node_param_to_dof[("phi", node)] = 2 * node + 1
+            self.dof_to_node_param[3 * node + 2] = ("phi", node)
+            self.node_param_to_dof[("phi", node)] = 3 * node + 2
 
         # Store original mappings for when boundary conditions are cleared
         self._original_dof_to_node_param = self.dof_to_node_param.copy()
@@ -226,7 +233,7 @@ class LinearEulerBernoulliBeam:
             dof_idx: DOF index in the current state vector
 
         Returns:
-            Tuple (parameter, node) where parameter is 'w' or 'phi'
+            Tuple (parameter, node) where parameter is 'u', 'w', or 'phi'
 
         Raises:
             KeyError: If the DOF index is invalid
@@ -241,7 +248,7 @@ class LinearEulerBernoulliBeam:
 
         Args:
             node_idx: Node index
-            param: Parameter type ('w' or 'phi')
+            param: Parameter type ('u', 'w', or 'phi')
 
         Returns:
             DOF index in the current state vector
@@ -260,7 +267,7 @@ class LinearEulerBernoulliBeam:
         Creates sparse matrix based on beam parameters and stores internally.
         """
         n_segments = len(self.parameters)
-        matrix_size = 2 * (n_segments + 1)
+        matrix_size = 3 * (n_segments + 1)
 
         # Lists for sparse matrix construction
         rows, cols, data = [], [], []
@@ -268,10 +275,10 @@ class LinearEulerBernoulliBeam:
         for i in range(n_segments):
             k_local = self._calculate_segment_stiffness(i)
             # Add local matrix entries to global matrix
-            for local_i in range(4):
-                for local_j in range(4):
-                    global_i = 2 * i + local_i
-                    global_j = 2 * i + local_j
+            for local_i in range(6):
+                for local_j in range(6):
+                    global_i = 3 * i + local_i
+                    global_j = 3 * i + local_j
                     rows.append(global_i)
                     cols.append(global_j)
                     data.append(k_local[local_i, local_j])
@@ -287,7 +294,7 @@ class LinearEulerBernoulliBeam:
         Creates sparse matrix based on beam parameters and stores internally.
         """
         n_segments = len(self.parameters)
-        matrix_size = 2 * (n_segments + 1)
+        matrix_size = 3 * (n_segments + 1)
 
         # Lists for sparse matrix construction
         rows, cols, data = [], [], []
@@ -295,10 +302,10 @@ class LinearEulerBernoulliBeam:
         for i in range(n_segments):
             m_local = self._calculate_segment_mass(i)
             # Add local matrix entries to global matrix
-            for local_i in range(4):
-                for local_j in range(4):
-                    global_i = 2 * i + local_i
-                    global_j = 2 * i + local_j
+            for local_i in range(6):
+                for local_j in range(6):
+                    global_i = 3 * i + local_i
+                    global_j = 3 * i + local_j
                     rows.append(global_i)
                     cols.append(global_j)
                     data.append(m_local[local_i, local_j])
@@ -436,15 +443,33 @@ class LinearEulerBernoulliBeam:
         row = self.parameters.iloc[i]
         L = row["length"]
         EI = row["elastic_modulus"] * row["moment_inertia"]
+        EA = row["elastic_modulus"] * row["cross_area"]
 
+        # 6x6 stiffness matrix with DOFs [u1, w1, phi1, u2, w2, phi2]
         return np.array(
             [
-                [12 / (L**2), 6 / L, -12 / (L**2), 6 / L],
-                [6 / L, 4, -6 / L, 2],
-                [-12 / (L**2), -6 / L, 12 / (L**2), -6 / L],
-                [6 / L, 2, -6 / L, 4],
+                [EA / L, 0, 0, -EA / L, 0, 0],
+                [
+                    0,
+                    12 * EI / L**3,
+                    6 * EI / L**2,
+                    0,
+                    -12 * EI / L**3,
+                    6 * EI / L**2,
+                ],
+                [0, 6 * EI / L**2, 4 * EI / L, 0, -6 * EI / L**2, 2 * EI / L],
+                [-EA / L, 0, 0, EA / L, 0, 0],
+                [
+                    0,
+                    -12 * EI / L**3,
+                    -6 * EI / L**2,
+                    0,
+                    12 * EI / L**3,
+                    -6 * EI / L**2,
+                ],
+                [0, 6 * EI / L**2, 2 * EI / L, 0, -6 * EI / L**2, 4 * EI / L],
             ]
-        ) * (EI / L)
+        )
 
     def _calculate_segment_mass(self, i: int) -> np.ndarray:
         """Calculate local mass matrix for segment i."""
@@ -454,10 +479,12 @@ class LinearEulerBernoulliBeam:
 
         return np.array(
             [
-                [156, -22 * L, 54, 13 * L],
-                [-22 * L, 4 * L**2, -13 * L, -3 * L**2],
-                [54, -13 * L, 156, 22 * L],
-                [13 * L, -3 * L**2, 22 * L, 4 * L**2],
+                [140, 0, 0, 70, 0, 0],
+                [0, 156, -22 * L, 0, 54, 13 * L],
+                [0, -22 * L, 4 * L**2, 0, -13 * L, -3 * L**2],
+                [70, 0, 0, 140, 0, 0],
+                [0, 54, -13 * L, 0, 156, 22 * L],
+                [0, 13 * L, -3 * L**2, 0, 22 * L, 4 * L**2],
             ]
         ) * (rhoA * L / 420)
 
@@ -494,11 +521,17 @@ class LinearEulerBernoulliBeam:
 
         # Process all boundary conditions
         for node_idx, bc_type in conditions.items():
+            base_idx = node_idx * 3  # Each node has 3 components [u, w, θ]
+
             if bc_type == BoundaryConditionType.FIXED:
-                dofs_to_constrain.add(2 * node_idx)  # Displacement
-                dofs_to_constrain.add(2 * node_idx + 1)  # Rotation
+                # Constrain all DOFs for node
+                dofs_to_constrain.add(base_idx)  # u (axial displacement)
+                dofs_to_constrain.add(base_idx + 1)  # w (transverse displacement)
+                dofs_to_constrain.add(base_idx + 2)  # θ (rotation)
             elif bc_type == BoundaryConditionType.PINNED:
-                dofs_to_constrain.add(2 * node_idx)  # Only displacement
+                # Constrain only displacements
+                dofs_to_constrain.add(base_idx)  # u (axial displacement)
+                dofs_to_constrain.add(base_idx + 1)  # w (transverse displacement)
             else:
                 raise ValueError(f"Unsupported boundary condition type: {bc_type}")
 
