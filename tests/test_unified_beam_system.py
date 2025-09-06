@@ -4,16 +4,19 @@ import pandas as pd
 import tempfile
 import os
 
-from src.continuum_robot.models.abstractions import Properties, ElementType
-from src.continuum_robot.models.segments import (
+from continuum_robot.models.abstractions import (
+    Properties,
+    ElementType,
+    BoundaryConditionType,
+)
+from continuum_robot.models.segments import (
     LinearSegment,
     NonlinearSegment,
     SegmentFactory,
     create_properties_from_dataframe,
 )
-from src.continuum_robot.models.euler_bernoulli_beam import EulerBernoulliBeam
-from src.continuum_robot.models.linear_euler_bernoulli_beam import BoundaryConditionType
-from src.continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
+from continuum_robot.models.euler_bernoulli_beam import EulerBernoulliBeam
+from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
 
 
 class TestProperties:
@@ -475,81 +478,6 @@ class TestDynamicBeamModelWithUnified:
         result = dynamic_system(0.0, state, force)
         assert result.shape == state.shape
         assert np.isfinite(result).all()
-
-
-class TestNumericalEquivalence:
-    """Test that unified system produces same results as original implementations."""
-
-    def test_linear_equivalence(self):
-        """Test that pure linear beam matches original LinearEulerBernoulliBeam."""
-        from src.continuum_robot.models.linear_euler_bernoulli_beam import (
-            LinearEulerBernoulliBeam,
-        )
-
-        df = pd.DataFrame(
-            {
-                "length": [1.0, 1.0],
-                "elastic_modulus": [200e9, 200e9],
-                "moment_inertia": [1e-6, 1e-6],
-                "density": [7850, 7850],
-                "cross_area": [1e-4, 1e-4],
-                "type": ["linear", "linear"],
-            }
-        )
-
-        # Create both beams
-        unified_beam = EulerBernoulliBeam(df)
-        original_beam = LinearEulerBernoulliBeam(df, 0.01)
-
-        # Compare mass matrices
-        M_unified = unified_beam.get_mass_matrix()
-        M_original = original_beam.get_mass_matrix()
-        assert np.allclose(M_unified, M_original, rtol=1e-10)
-
-        # Compare stiffness for small displacements (linear case)
-        state = np.random.random(M_unified.shape[0]) * 0.001  # Very small
-
-        # For linear case, stiffness function should give K*x
-        forces_unified = unified_beam.get_stiffness_function()(state)
-        forces_original = original_beam.get_stiffness_matrix().dot(state)
-
-        assert np.allclose(forces_unified, forces_original, rtol=1e-10)
-
-    def test_nonlinear_equivalence(self):
-        """Test that pure nonlinear beam matches original NonlinearEulerBernoulliBeam."""
-        from src.continuum_robot.models.nonlinear_euler_bernoulli_beam import (
-            NonlinearEulerBernoulliBeam,
-        )
-
-        df = pd.DataFrame(
-            {
-                "length": [1.0, 1.0],
-                "elastic_modulus": [200e9, 200e9],
-                "moment_inertia": [1e-6, 1e-6],
-                "density": [7850, 7850],
-                "cross_area": [1e-4, 1e-4],
-                "type": ["nonlinear", "nonlinear"],
-            }
-        )
-
-        # Create both beams
-        unified_beam = EulerBernoulliBeam(df)
-        original_beam = NonlinearEulerBernoulliBeam(df)
-        original_beam.create_mass_matrix()
-        original_beam.create_stiffness_function()
-
-        # Compare mass matrices
-        M_unified = unified_beam.get_mass_matrix()
-        M_original = original_beam.get_mass_matrix()
-        assert np.allclose(M_unified, M_original, rtol=1e-10)
-
-        # Compare stiffness functions
-        state = np.array([0.01, 0.001, 0.1, 0.02, 0.002, 0.2, 0.0, 0.0, 0.0])
-
-        forces_unified = unified_beam.get_stiffness_function()(state)
-        forces_original = original_beam.get_stiffness_function()(state)
-
-        assert np.allclose(forces_unified, forces_original, rtol=1e-10)
 
 
 @pytest.mark.integration
