@@ -267,6 +267,327 @@ class NonlinearEulerBernoulliBeam:
             ]
         ) * (rhoA * L / 420)
 
+    @staticmethod
+    def _f_1_expr(u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float):
+        """
+        Expression for axial force at node 1.
+
+        Parameters:
+        u1 (float): Displacement at node 1.
+        w1 (float): Transverse displacement at node 1.
+        theta1 (float): Rotation at node 1.
+        u2 (float): Displacement at node 2.
+        w2 (float): Transverse displacement at node 2.
+        theta2 (float): Rotation at node 2.
+        length (float): Length of the beam element.
+        A_xx (float): Elastic modulus times cross-sectional area (EA).
+
+        Returns:
+        float: Axial force at node 1.
+        """
+        # A_xx is elastic modulus * cross sectional area (EA)
+        # D_xx is elastic modulus * moment of inertia (EI)
+        return (
+            A_xx
+            * (
+                length
+                * (
+                    -theta1
+                    * (
+                        0.0666666666666665 * theta1 * length
+                        - 0.0166666666666667 * theta2 * length
+                        - 0.05 * w1
+                        + 0.05 * w2
+                    )
+                    + theta2
+                    * (
+                        0.0166666666666667 * theta1 * length
+                        - 0.0666666666666667 * theta2 * length
+                        + 0.05 * w1
+                        - 0.05 * w2
+                    )
+                    + u1
+                )
+                + (-u2 - w1 + w2)
+                * (
+                    -0.05 * theta1 * length
+                    - 0.05 * theta2 * length
+                    + 0.6 * w1
+                    - 0.6 * w2
+                )
+            )
+            / length**2
+        )
+
+    @staticmethod
+    def _f_2_expr(u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float):
+        """
+        Expression for bending force at node 1.
+
+        Parameters:
+        u1 (float): Displacement at node 1.
+        w1 (float): Transverse displacement at node 1.
+        theta1 (float): Rotation at node 1.
+        u2 (float): Displacement at node 2.
+        w2 (float): Transverse displacement at node 2.
+        theta2 (float): Rotation at node 2.
+        length (float): Length of the beam element.
+        A_xx (float): Elastic modulus times cross-sectional area (EA).
+
+        Returns:
+        float: bending force at node 1.
+        """
+        return (
+            A_xx
+            * (
+                length
+                * (
+                    theta1
+                    * (
+                        0.0666666666666665 * theta1 * length
+                        - 0.0166666666666667 * theta2 * length
+                        - 0.05 * w1
+                        + 0.05 * w2
+                    )
+                    - theta2
+                    * (
+                        0.0166666666666667 * theta1 * length
+                        - 0.0666666666666667 * theta2 * length
+                        + 0.05 * w1
+                        - 0.05 * w2
+                    )
+                    - u1
+                    + u2
+                )
+                + (w1 - w2)
+                * (
+                    -0.05 * theta1 * length
+                    - 0.05 * theta2 * length
+                    + 0.6 * w1
+                    - 0.6 * w2
+                )
+            )
+            / length**2
+        )
+
+    @staticmethod
+    def _f_3_expr(
+        u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float, D_xx: float
+    ):
+        """
+        Expression for bending moment at node 1.
+
+        Parameters:
+        u1 (float): Displacement at node 1.
+        w1 (float): Transverse displacement at node 1.
+        theta1 (float): Rotation at node 1.
+        u2 (float): Displacement at node 2.
+        w2 (float): Transverse displacement at node 2.
+        theta2 (float): Rotation at node 2.
+        length (float): Length of the beam element.
+        A_xx (float): Elastic modulus times cross-sectional area (EA).
+
+        Returns:
+        float: bending moment at node 1.
+        """
+        return (
+            0.1
+            * (
+                0.0357142857143344 * A_xx * theta1**3 * length**3
+                - 0.107142857143003 * A_xx * theta1**2 * theta2 * length**3
+                + 1.28571428571433 * A_xx * theta1**2 * length**2 * w1
+                - 1.28571428571433 * A_xx * theta1**2 * length**2 * w2
+                - 0.107142857143003 * A_xx * theta1 * theta2**2 * length**3
+                + 1.0 * A_xx * theta1 * length**2 * u1
+                - 1.0 * A_xx * theta1 * length**2 * u2
+                - 3.8571428571413 * A_xx * theta1 * length * w1**2
+                + 7.7142857142826 * A_xx * theta1 * length * w1 * w2
+                - 3.8571428571413 * A_xx * theta1 * length * w2**2
+                + 0.0357142857143344 * A_xx * theta2**3 * length**3
+                + 1.28571428571433 * A_xx * theta2**2 * length**2 * w1
+                - 1.28571428571433 * A_xx * theta2**2 * length**2 * w2
+                + 1.0 * A_xx * theta2 * length**2 * u1
+                - 1.0 * A_xx * theta2 * length**2 * u2
+                - 3.857142857143 * A_xx * theta2 * length * w1**2
+                + 7.71428571428601 * A_xx * theta2 * length * w1 * w2
+                - 3.857142857143 * A_xx * theta2 * length * w2**2
+                - 12.0 * A_xx * length * u1 * w1
+                + 12.0 * A_xx * length * u1 * w2
+                + 12.0 * A_xx * length * u2 * w1
+                - 12.0 * A_xx * length * u2 * w2
+                + 10.2857142857147 * A_xx * w1**3
+                - 30.857142857144 * A_xx * w1**2 * w2
+                + 30.857142857144 * A_xx * w1 * w2**2
+                - 10.2857142857147 * A_xx * w2**3
+                - 60.0 * D_xx * theta1 * length
+                - 60.0 * D_xx * theta2 * length
+                + 120.0 * D_xx * w1
+                - 120.0 * D_xx * w2
+            )
+            / length**3
+        )
+
+    @staticmethod
+    def _f_4_expr(
+        u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float, D_xx: float
+    ):
+        """
+        Expression for axial force at node 2.
+
+        Parameters:
+        u1 (float): Displacement at node 1.
+        w1 (float): Transverse displacement at node 1.
+        theta1 (float): Rotation at node 1.
+        u2 (float): Displacement at node 2.
+        w2 (float): Transverse displacement at node 2.
+        theta2 (float): Rotation at node 2.
+        length (float): Length of the beam element.
+        A_xx (float): Elastic modulus times cross-sectional area (EA).
+
+        Returns:
+        float: axial force at node 2.
+        """
+        return (
+            0.0285714285714391 * A_xx * theta1**3 * length
+            - 0.0107142857142861 * A_xx * theta1**2 * theta2 * length
+            + 0.0107142857142719 * A_xx * theta1**2 * w1
+            - 0.0107142857142719 * A_xx * theta1**2 * w2
+            + 0.00714285714286444 * A_xx * theta1 * theta2**2 * length
+            - 0.0214285714286007 * A_xx * theta1 * theta2 * w1
+            + 0.0214285714286007 * A_xx * theta1 * theta2 * w2
+            - 0.133333333333333 * A_xx * theta1 * u1
+            + 0.133333333333333 * A_xx * theta1 * u2
+            + 0.128571428571433 * A_xx * theta1 * w1**2 / length
+            - 0.257142857142867 * A_xx * theta1 * w1 * w2 / length
+            + 0.128571428571433 * A_xx * theta1 * w2**2 / length
+            - 0.00357142857143344 * A_xx * theta2**3 * length
+            - 0.0107142857142719 * A_xx * theta2**2 * w1
+            + 0.0107142857142719 * A_xx * theta2**2 * w2
+            + 0.0333333333333333 * A_xx * theta2 * u1
+            - 0.0333333333333333 * A_xx * theta2 * u2
+            + 0.1 * A_xx * u1 * w1 / length
+            - 0.1 * A_xx * u1 * w2 / length
+            - 0.1 * A_xx * u2 * w1 / length
+            + 0.1 * A_xx * u2 * w2 / length
+            - 0.128571428571377 * A_xx * w1**3 / length**2
+            + 0.38571428571413 * A_xx * w1**2 * w2 / length**2
+            - 0.38571428571413 * A_xx * w1 * w2**2 / length**2
+            + 0.128571428571377 * A_xx * w2**3 / length**2
+            + 4.0 * D_xx * theta1 / length
+            + 2.0 * D_xx * theta2 / length
+            - 6.0 * D_xx * w1 / length**2
+            + 6.0 * D_xx * w2 / length**2
+        )
+
+    @staticmethod
+    def _f_5_expr(
+        u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float, D_xx: float
+    ):
+        """
+        Expression for bending force at node 2.
+
+        Parameters:
+        u1 (float): Displacement at node 1.
+        w1 (float): Transverse displacement at node 1.
+        theta1 (float): Rotation at node 1.
+        u2 (float): Displacement at node 2.
+        w2 (float): Transverse displacement at node 2.
+        theta2 (float): Rotation at node 2.
+        length (float): Length of the beam element.
+        A_xx (float): Elastic modulus times cross-sectional area (EA).
+
+        Returns:
+        float: bending force at node 2.
+        """
+        return (
+            0.1
+            * (
+                -0.0357142857143344 * A_xx * theta1**3 * length**3
+                + 0.107142857143003 * A_xx * theta1**2 * theta2 * length**3
+                - 1.28571428571433 * A_xx * theta1**2 * length**2 * w1
+                + 1.28571428571433 * A_xx * theta1**2 * length**2 * w2
+                + 0.107142857143003 * A_xx * theta1 * theta2**2 * length**3
+                - 1.0 * A_xx * theta1 * length**2 * u1
+                + 1.0 * A_xx * theta1 * length**2 * u2
+                + 3.8571428571413 * A_xx * theta1 * length * w1**2
+                - 7.7142857142826 * A_xx * theta1 * length * w1 * w2
+                + 3.8571428571413 * A_xx * theta1 * length * w2**2
+                - 0.0357142857143344 * A_xx * theta2**3 * length**3
+                - 1.28571428571433 * A_xx * theta2**2 * length**2 * w1
+                + 1.28571428571433 * A_xx * theta2**2 * length**2 * w2
+                - 1.0 * A_xx * theta2 * length**2 * u1
+                + 1.0 * A_xx * theta2 * length**2 * u2
+                + 3.857142857143 * A_xx * theta2 * length * w1**2
+                - 7.71428571428601 * A_xx * theta2 * length * w1 * w2
+                + 3.857142857143 * A_xx * theta2 * length * w2**2
+                + 12.0 * A_xx * length * u1 * w1
+                - 12.0 * A_xx * length * u1 * w2
+                - 12.0 * A_xx * length * u2 * w1
+                + 12.0 * A_xx * length * u2 * w2
+                - 10.2857142857147 * A_xx * w1**3
+                + 30.857142857144 * A_xx * w1**2 * w2
+                - 30.857142857144 * A_xx * w1 * w2**2
+                + 10.2857142857147 * A_xx * w2**3
+                + 60.0 * D_xx * theta1 * length
+                + 60.0 * D_xx * theta2 * length
+                - 120.0 * D_xx * w1
+                + 120.0 * D_xx * w2
+            )
+            / length**3
+        )
+
+    @staticmethod
+    def _f_6_expr(
+        u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float, D_xx: float
+    ):
+        """
+        Expression for bending moment at node 2.
+
+        Parameters:
+        u1 (float): Displacement at node 1.
+        w1 (float): Transverse displacement at node 1.
+        theta1 (float): Rotation at node 1.
+        u2 (float): Displacement at node 2.
+        w2 (float): Transverse displacement at node 2.
+        theta2 (float): Rotation at node 2.
+        length (float): Length of the beam element.
+        A_xx (float): Elastic modulus times cross-sectional area (EA).
+
+        Returns:
+        float: bending moment at node 2.
+        """
+        return (
+            -0.00357142857143344 * A_xx * theta1**3 * length
+            + 0.00714285714286356 * A_xx * theta1**2 * theta2 * length
+            - 0.0107142857143003 * A_xx * theta1**2 * w1
+            + 0.0107142857143003 * A_xx * theta1**2 * w2
+            - 0.0107142857142932 * A_xx * theta1 * theta2**2 * length
+            - 0.021428571428558 * A_xx * theta1 * theta2 * w1
+            + 0.021428571428558 * A_xx * theta1 * theta2 * w2
+            + 0.0333333333333333 * A_xx * theta1 * u1
+            - 0.0333333333333333 * A_xx * theta1 * u2
+            + 0.0285714285714271 * A_xx * theta2**3 * length
+            + 0.0107142857142932 * A_xx * theta2**2 * w1
+            - 0.0107142857142932 * A_xx * theta2**2 * w2
+            - 0.133333333333333 * A_xx * theta2 * u1
+            + 0.133333333333333 * A_xx * theta2 * u2
+            + 0.128571428571428 * A_xx * theta2 * w1**2 / length
+            - 0.257142857142856 * A_xx * theta2 * w1 * w2 / length
+            + 0.128571428571428 * A_xx * theta2 * w2**2 / length
+            + 0.1 * A_xx * u1 * w1 / length
+            - 0.1 * A_xx * u1 * w2 / length
+            - 0.1 * A_xx * u2 * w1 / length
+            + 0.1 * A_xx * u2 * w2 / length
+            - 0.128571428571433 * A_xx * w1**3 / length**2
+            + 0.3857142857143 * A_xx * w1**2 * w2 / length**2
+            - 0.3857142857143 * A_xx * w1 * w2**2 / length**2
+            + 0.128571428571433 * A_xx * w2**3 / length**2
+            + 2.0 * D_xx * theta1 / length
+            + 4.0 * D_xx * theta2 / length
+            - 6.0 * D_xx * w1 / length**2
+            + 6.0 * D_xx * w2 / length**2
+        )
+
     def _calculate_segment_stiffness_function(self, i: int) -> Callable:
         """
         Calculate nonlinear stiffness function for segment i.
@@ -288,12 +609,20 @@ class NonlinearEulerBernoulliBeam:
 
             # Implement the nonlinear stiffness function f1-f6
             # from the provided equations
-            f1 = partial(_f_1_expr, length=seg_l, A_xx=EA)
-            f2 = partial(_f_2_expr, length=seg_l, A_xx=EA)
-            f3 = partial(_f_3_expr, length=seg_l, A_xx=EA, D_xx=EI)
-            f4 = partial(_f_4_expr, length=seg_l, A_xx=EA, D_xx=EI)
-            f5 = partial(_f_5_expr, length=seg_l, A_xx=EA, D_xx=EI)
-            f6 = partial(_f_6_expr, length=seg_l, A_xx=EA, D_xx=EI)
+            f1 = partial(NonlinearEulerBernoulliBeam._f_1_expr, length=seg_l, A_xx=EA)
+            f2 = partial(NonlinearEulerBernoulliBeam._f_2_expr, length=seg_l, A_xx=EA)
+            f3 = partial(
+                NonlinearEulerBernoulliBeam._f_3_expr, length=seg_l, A_xx=EA, D_xx=EI
+            )
+            f4 = partial(
+                NonlinearEulerBernoulliBeam._f_4_expr, length=seg_l, A_xx=EA, D_xx=EI
+            )
+            f5 = partial(
+                NonlinearEulerBernoulliBeam._f_5_expr, length=seg_l, A_xx=EA, D_xx=EI
+            )
+            f6 = partial(
+                NonlinearEulerBernoulliBeam._f_6_expr, length=seg_l, A_xx=EA, D_xx=EI
+            )
 
             # Evaluate with remaining variables
             return np.array(
@@ -305,321 +634,6 @@ class NonlinearEulerBernoulliBeam:
                     f5(u1, w1, theta1, u2, w2, theta2),
                     f6(u1, w1, theta1, u2, w2, theta2),
                 ]
-            )
-
-        def _f_1_expr(u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float):
-            """
-            Expression for axial force at node 1.
-
-            Parameters:
-            u1 (float): Displacement at node 1.
-            w1 (float): Transverse displacement at node 1.
-            theta1 (float): Rotation at node 1.
-            u2 (float): Displacement at node 2.
-            w2 (float): Transverse displacement at node 2.
-            theta2 (float): Rotation at node 2.
-            length (float): Length of the beam element.
-            A_xx (float): Elastic modulus times cross-sectional area (EA).
-
-            Returns:
-            float: Axial force at node 1.
-            """
-            # A_xx is elastic modulus * cross sectional area (EA)
-            # D_xx is elastic modulus * moment of inertia (EI)
-            return (
-                A_xx
-                * (
-                    length
-                    * (
-                        -theta1
-                        * (
-                            0.0666666666666665 * theta1 * length
-                            - 0.0166666666666667 * theta2 * length
-                            - 0.05 * w1
-                            + 0.05 * w2
-                        )
-                        + theta2
-                        * (
-                            0.0166666666666667 * theta1 * length
-                            - 0.0666666666666667 * theta2 * length
-                            + 0.05 * w1
-                            - 0.05 * w2
-                        )
-                        + u1
-                    )
-                    + (-u2 - w1 + w2)
-                    * (
-                        -0.05 * theta1 * length
-                        - 0.05 * theta2 * length
-                        + 0.6 * w1
-                        - 0.6 * w2
-                    )
-                )
-                / length**2
-            )
-
-        def _f_2_expr(u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float):
-            """
-            Expression for bending force at node 1.
-
-            Parameters:
-            u1 (float): Displacement at node 1.
-            w1 (float): Transverse displacement at node 1.
-            theta1 (float): Rotation at node 1.
-            u2 (float): Displacement at node 2.
-            w2 (float): Transverse displacement at node 2.
-            theta2 (float): Rotation at node 2.
-            length (float): Length of the beam element.
-            A_xx (float): Elastic modulus times cross-sectional area (EA).
-
-            Returns:
-            float: bending force at node 1.
-            """
-            return (
-                A_xx
-                * (
-                    length
-                    * (
-                        theta1
-                        * (
-                            0.0666666666666665 * theta1 * length
-                            - 0.0166666666666667 * theta2 * length
-                            - 0.05 * w1
-                            + 0.05 * w2
-                        )
-                        - theta2
-                        * (
-                            0.0166666666666667 * theta1 * length
-                            - 0.0666666666666667 * theta2 * length
-                            + 0.05 * w1
-                            - 0.05 * w2
-                        )
-                        - u1
-                        + u2
-                    )
-                    + (w1 - w2)
-                    * (
-                        -0.05 * theta1 * length
-                        - 0.05 * theta2 * length
-                        + 0.6 * w1
-                        - 0.6 * w2
-                    )
-                )
-                / length**2
-            )
-
-        def _f_3_expr(
-            u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float, D_xx: float
-        ):
-            """
-            Expression for bending moment at node 1.
-
-            Parameters:
-            u1 (float): Displacement at node 1.
-            w1 (float): Transverse displacement at node 1.
-            theta1 (float): Rotation at node 1.
-            u2 (float): Displacement at node 2.
-            w2 (float): Transverse displacement at node 2.
-            theta2 (float): Rotation at node 2.
-            length (float): Length of the beam element.
-            A_xx (float): Elastic modulus times cross-sectional area (EA).
-
-            Returns:
-            float: bending moment at node 1.
-            """
-            return (
-                0.1
-                * (
-                    0.0357142857143344 * A_xx * theta1**3 * length**3
-                    - 0.107142857143003 * A_xx * theta1**2 * theta2 * length**3
-                    + 1.28571428571433 * A_xx * theta1**2 * length**2 * w1
-                    - 1.28571428571433 * A_xx * theta1**2 * length**2 * w2
-                    - 0.107142857143003 * A_xx * theta1 * theta2**2 * length**3
-                    + 1.0 * A_xx * theta1 * length**2 * u1
-                    - 1.0 * A_xx * theta1 * length**2 * u2
-                    - 3.8571428571413 * A_xx * theta1 * length * w1**2
-                    + 7.7142857142826 * A_xx * theta1 * length * w1 * w2
-                    - 3.8571428571413 * A_xx * theta1 * length * w2**2
-                    + 0.0357142857143344 * A_xx * theta2**3 * length**3
-                    + 1.28571428571433 * A_xx * theta2**2 * length**2 * w1
-                    - 1.28571428571433 * A_xx * theta2**2 * length**2 * w2
-                    + 1.0 * A_xx * theta2 * length**2 * u1
-                    - 1.0 * A_xx * theta2 * length**2 * u2
-                    - 3.857142857143 * A_xx * theta2 * length * w1**2
-                    + 7.71428571428601 * A_xx * theta2 * length * w1 * w2
-                    - 3.857142857143 * A_xx * theta2 * length * w2**2
-                    - 12.0 * A_xx * length * u1 * w1
-                    + 12.0 * A_xx * length * u1 * w2
-                    + 12.0 * A_xx * length * u2 * w1
-                    - 12.0 * A_xx * length * u2 * w2
-                    + 10.2857142857147 * A_xx * w1**3
-                    - 30.857142857144 * A_xx * w1**2 * w2
-                    + 30.857142857144 * A_xx * w1 * w2**2
-                    - 10.2857142857147 * A_xx * w2**3
-                    - 60.0 * D_xx * theta1 * length
-                    - 60.0 * D_xx * theta2 * length
-                    + 120.0 * D_xx * w1
-                    - 120.0 * D_xx * w2
-                )
-                / length**3
-            )
-
-        def _f_4_expr(
-            u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float, D_xx: float
-        ):
-            """
-            Expression for axial force at node 2.
-
-            Parameters:
-            u1 (float): Displacement at node 1.
-            w1 (float): Transverse displacement at node 1.
-            theta1 (float): Rotation at node 1.
-            u2 (float): Displacement at node 2.
-            w2 (float): Transverse displacement at node 2.
-            theta2 (float): Rotation at node 2.
-            length (float): Length of the beam element.
-            A_xx (float): Elastic modulus times cross-sectional area (EA).
-
-            Returns:
-            float: axial force at node 2.
-            """
-            return (
-                0.0285714285714391 * A_xx * theta1**3 * length
-                - 0.0107142857142861 * A_xx * theta1**2 * theta2 * length
-                + 0.0107142857142719 * A_xx * theta1**2 * w1
-                - 0.0107142857142719 * A_xx * theta1**2 * w2
-                + 0.00714285714286444 * A_xx * theta1 * theta2**2 * length
-                - 0.0214285714286007 * A_xx * theta1 * theta2 * w1
-                + 0.0214285714286007 * A_xx * theta1 * theta2 * w2
-                - 0.133333333333333 * A_xx * theta1 * u1
-                + 0.133333333333333 * A_xx * theta1 * u2
-                + 0.128571428571433 * A_xx * theta1 * w1**2 / length
-                - 0.257142857142867 * A_xx * theta1 * w1 * w2 / length
-                + 0.128571428571433 * A_xx * theta1 * w2**2 / length
-                - 0.00357142857143344 * A_xx * theta2**3 * length
-                - 0.0107142857142719 * A_xx * theta2**2 * w1
-                + 0.0107142857142719 * A_xx * theta2**2 * w2
-                + 0.0333333333333333 * A_xx * theta2 * u1
-                - 0.0333333333333333 * A_xx * theta2 * u2
-                + 0.1 * A_xx * u1 * w1 / length
-                - 0.1 * A_xx * u1 * w2 / length
-                - 0.1 * A_xx * u2 * w1 / length
-                + 0.1 * A_xx * u2 * w2 / length
-                - 0.128571428571377 * A_xx * w1**3 / length**2
-                + 0.38571428571413 * A_xx * w1**2 * w2 / length**2
-                - 0.38571428571413 * A_xx * w1 * w2**2 / length**2
-                + 0.128571428571377 * A_xx * w2**3 / length**2
-                + 4.0 * D_xx * theta1 / length
-                + 2.0 * D_xx * theta2 / length
-                - 6.0 * D_xx * w1 / length**2
-                + 6.0 * D_xx * w2 / length**2
-            )
-
-        def _f_5_expr(
-            u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float, D_xx: float
-        ):
-            """
-            Expression for bending force at node 2.
-
-            Parameters:
-            u1 (float): Displacement at node 1.
-            w1 (float): Transverse displacement at node 1.
-            theta1 (float): Rotation at node 1.
-            u2 (float): Displacement at node 2.
-            w2 (float): Transverse displacement at node 2.
-            theta2 (float): Rotation at node 2.
-            length (float): Length of the beam element.
-            A_xx (float): Elastic modulus times cross-sectional area (EA).
-
-            Returns:
-            float: bending force at node 2.
-            """
-            return (
-                0.1
-                * (
-                    -0.0357142857143344 * A_xx * theta1**3 * length**3
-                    + 0.107142857143003 * A_xx * theta1**2 * theta2 * length**3
-                    - 1.28571428571433 * A_xx * theta1**2 * length**2 * w1
-                    + 1.28571428571433 * A_xx * theta1**2 * length**2 * w2
-                    + 0.107142857143003 * A_xx * theta1 * theta2**2 * length**3
-                    - 1.0 * A_xx * theta1 * length**2 * u1
-                    + 1.0 * A_xx * theta1 * length**2 * u2
-                    + 3.8571428571413 * A_xx * theta1 * length * w1**2
-                    - 7.7142857142826 * A_xx * theta1 * length * w1 * w2
-                    + 3.8571428571413 * A_xx * theta1 * length * w2**2
-                    - 0.0357142857143344 * A_xx * theta2**3 * length**3
-                    - 1.28571428571433 * A_xx * theta2**2 * length**2 * w1
-                    + 1.28571428571433 * A_xx * theta2**2 * length**2 * w2
-                    - 1.0 * A_xx * theta2 * length**2 * u1
-                    + 1.0 * A_xx * theta2 * length**2 * u2
-                    + 3.857142857143 * A_xx * theta2 * length * w1**2
-                    - 7.71428571428601 * A_xx * theta2 * length * w1 * w2
-                    + 3.857142857143 * A_xx * theta2 * length * w2**2
-                    + 12.0 * A_xx * length * u1 * w1
-                    - 12.0 * A_xx * length * u1 * w2
-                    - 12.0 * A_xx * length * u2 * w1
-                    + 12.0 * A_xx * length * u2 * w2
-                    - 10.2857142857147 * A_xx * w1**3
-                    + 30.857142857144 * A_xx * w1**2 * w2
-                    - 30.857142857144 * A_xx * w1 * w2**2
-                    + 10.2857142857147 * A_xx * w2**3
-                    + 60.0 * D_xx * theta1 * length
-                    + 60.0 * D_xx * theta2 * length
-                    - 120.0 * D_xx * w1
-                    + 120.0 * D_xx * w2
-                )
-                / length**3
-            )
-
-        def _f_6_expr(
-            u1, w1, theta1, u2, w2, theta2, *, length: float, A_xx: float, D_xx: float
-        ):
-            """
-            Expression for bending moment at node 2.
-
-            Parameters:
-            u1 (float): Displacement at node 1.
-            w1 (float): Transverse displacement at node 1.
-            theta1 (float): Rotation at node 1.
-            u2 (float): Displacement at node 2.
-            w2 (float): Transverse displacement at node 2.
-            theta2 (float): Rotation at node 2.
-            length (float): Length of the beam element.
-            A_xx (float): Elastic modulus times cross-sectional area (EA).
-
-            Returns:
-            float: bending moment at node 2.
-            """
-            return (
-                -0.00357142857143344 * A_xx * theta1**3 * length
-                + 0.00714285714286356 * A_xx * theta1**2 * theta2 * length
-                - 0.0107142857143003 * A_xx * theta1**2 * w1
-                + 0.0107142857143003 * A_xx * theta1**2 * w2
-                - 0.0107142857142932 * A_xx * theta1 * theta2**2 * length
-                - 0.021428571428558 * A_xx * theta1 * theta2 * w1
-                + 0.021428571428558 * A_xx * theta1 * theta2 * w2
-                + 0.0333333333333333 * A_xx * theta1 * u1
-                - 0.0333333333333333 * A_xx * theta1 * u2
-                + 0.0285714285714271 * A_xx * theta2**3 * length
-                + 0.0107142857142932 * A_xx * theta2**2 * w1
-                - 0.0107142857142932 * A_xx * theta2**2 * w2
-                - 0.133333333333333 * A_xx * theta2 * u1
-                + 0.133333333333333 * A_xx * theta2 * u2
-                + 0.128571428571428 * A_xx * theta2 * w1**2 / length
-                - 0.257142857142856 * A_xx * theta2 * w1 * w2 / length
-                + 0.128571428571428 * A_xx * theta2 * w2**2 / length
-                + 0.1 * A_xx * u1 * w1 / length
-                - 0.1 * A_xx * u1 * w2 / length
-                - 0.1 * A_xx * u2 * w1 / length
-                + 0.1 * A_xx * u2 * w2 / length
-                - 0.128571428571433 * A_xx * w1**3 / length**2
-                + 0.3857142857143 * A_xx * w1**2 * w2 / length**2
-                - 0.3857142857143 * A_xx * w1 * w2**2 / length**2
-                + 0.128571428571433 * A_xx * w2**3 / length**2
-                + 2.0 * D_xx * theta1 / length
-                + 4.0 * D_xx * theta2 / length
-                - 6.0 * D_xx * w1 / length**2
-                + 6.0 * D_xx * w2 / length**2
             )
 
         return stiffness_func
