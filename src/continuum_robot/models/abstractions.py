@@ -12,6 +12,13 @@ class ElementType(Enum):
     NONLINEAR = "nonlinear"
 
 
+class BoundaryConditionType(Enum):
+    """Enumeration of supported boundary condition types."""
+
+    FIXED = "fixed"  # Both displacement and rotation fixed
+    PINNED = "pinned"  # Displacement fixed, rotation free
+
+
 @dataclass
 class Properties:
     """Standardized segment properties container with validation."""

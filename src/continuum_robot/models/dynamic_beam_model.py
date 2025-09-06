@@ -4,17 +4,9 @@ import pandas as pd
 from scipy import sparse
 from scipy.sparse.linalg import inv
 import pathlib
-from enum import Enum
 
-from .linear_euler_bernoulli_beam import BoundaryConditionType
+from .abstractions import ElementType, BoundaryConditionType
 from .euler_bernoulli_beam import EulerBernoulliBeam
-
-
-class ElementType(Enum):
-    """Enumeration of supported element types."""
-
-    LINEAR = "linear"
-    NONLINEAR = "nonlinear"
 
 
 class FluidDynamicsParams:
