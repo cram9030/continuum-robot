@@ -5,10 +5,8 @@ import tempfile
 import os
 from scipy.integrate import solve_ivp
 
-from continuum_robot.models.dynamic_beam_model import (
-    DynamicEulerBernoulliBeam,
-    FluidDynamicsParams,
-)
+from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
+from continuum_robot.models.fluid_forces import FluidDynamicsParams
 
 
 @pytest.fixture
@@ -522,15 +520,23 @@ def test_fluid_coefficients_mapping(beam_file_with_fluid):
     fluid_params = FluidDynamicsParams(fluid_density=1000.0, enable_fluid_effects=True)
     beam = DynamicEulerBernoulliBeam(beam_file_with_fluid, fluid_params=fluid_params)
 
-    # Check fluid coefficients were computed
-    assert beam.fluid_coefficients is not None
+    # Get the FluidDragForce component from the force registry
+    force_components = beam.force_registry.get_registered_forces()
+    fluid_force = None
+    for comp in force_components:
+        if hasattr(comp, "fluid_coefficients"):
+            fluid_force = comp
+            break
+
+    assert fluid_force is not None, "FluidDragForce component not found"
+    assert fluid_force.fluid_coefficients is not None
 
     # Check that the drag factors were computed only for 'w' DOFs
-    assert "w_vel_indices" in beam.fluid_coefficients
-    assert "drag_factors" in beam.fluid_coefficients
+    assert "w_vel_indices" in fluid_force.fluid_coefficients
+    assert "drag_factors" in fluid_force.fluid_coefficients
 
-    w_vel_indices = beam.fluid_coefficients["w_vel_indices"]
-    w_pos_indices = beam.fluid_coefficients["w_pos_indices"]
+    w_vel_indices = fluid_force.fluid_coefficients["w_vel_indices"]
+    w_pos_indices = fluid_force.fluid_coefficients["w_pos_indices"]
 
     # Check that all velocity indices correspond to 'w' parameters
     for idx in w_vel_indices:

@@ -147,3 +147,50 @@ class IBeam(ABC):
     def get_constrained_dofs(self) -> List[int]:
         """Get list of constrained DOF indices"""
         pass
+
+
+class AbstractForce(ABC):
+    """Abstract base class for force components in dynamic systems."""
+
+    @abstractmethod
+    def compute_forces(self, x: np.ndarray, t: float) -> np.ndarray:
+        """
+        Compute force vector given current state and time.
+
+        Args:
+            x: Current state vector [positions, velocities]
+            t: Current time
+
+        Returns:
+            Force vector corresponding to position states
+        """
+        pass
+
+    @abstractmethod
+    def is_enabled(self) -> bool:
+        """Return True if this force component is enabled."""
+        pass
+
+
+class AbstractInputHandler(ABC):
+    """Abstract base class for input processing components."""
+
+    @abstractmethod
+    def process_input(self, x: np.ndarray, u: np.ndarray, t: float) -> np.ndarray:
+        """
+        Compute input modifications given current state, input, and time.
+
+        Args:
+            x: Current state vector [positions, velocities]
+            u: Original input vector
+            t: Current time
+
+        Returns:
+            Input modification vector (delta) to be added to original input
+        """
+        pass
+
+    @abstractmethod
+    def is_enabled(self) -> bool:
+        """Return True if this input handler is enabled."""
+        pass
