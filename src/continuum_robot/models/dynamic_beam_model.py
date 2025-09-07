@@ -7,25 +7,8 @@ import pathlib
 
 from .abstractions import ElementType, BoundaryConditionType
 from .euler_bernoulli_beam import EulerBernoulliBeam
-
-
-class FluidDynamicsParams:
-    """Container for fluid dynamics parameters."""
-
-    def __init__(self, fluid_density: float = 0.0, enable_fluid_effects: bool = False):
-        """
-        Initialize fluid dynamics parameters.
-
-        Args:
-            fluid_density: Density of the fluid medium [kg/m³]
-            enable_fluid_effects: Whether to enable fluid dynamics effects
-        """
-        self.fluid_density = fluid_density
-        self.enable_fluid_effects = enable_fluid_effects
-
-    def __bool__(self) -> bool:
-        """Return True if fluid effects are enabled."""
-        return self.enable_fluid_effects
+from .fluid_forces import FluidDragForce, FluidDynamicsParams
+from .force_registry import ForceRegistry, InputRegistry
 
 
 class DynamicEulerBernoulliBeam:
@@ -40,7 +23,6 @@ class DynamicEulerBernoulliBeam:
     def __init__(
         self,
         filename: Union[str, pathlib.Path],
-        damping_ratio: float = 0.01,
         fluid_params: FluidDynamicsParams = None,
     ):
         """
@@ -48,7 +30,6 @@ class DynamicEulerBernoulliBeam:
 
         Args:
             filename: Path to CSV containing beam parameters and element types
-            damping_ratio: Damping ratio for linear elements [0,1]
             fluid_params: Optional fluid dynamics parameters for simulating beam
                           motion through a fluid medium
 
@@ -80,13 +61,15 @@ class DynamicEulerBernoulliBeam:
         self.system_func = None
         self.input_func = None
 
-        # Initialize state mapping
+        # Initialize registries for forces and inputs
+        self.force_registry = ForceRegistry()
+        self.input_registry = InputRegistry()
+
+        # Initialize state mapping first (needed for force components)
         self._initialize_state_mapping()
 
-        # Precompute fluid dynamics coefficients if enabled
-        self.fluid_coefficients = None
-        if self.fluid_params.enable_fluid_effects:
-            self._precompute_fluid_coefficients()
+        # Auto-register forces based on configuration (after state mapping is ready)
+        self._auto_register_forces()
 
     def _validate_parameters(self) -> None:
         """Validate input parameters and types."""
@@ -232,130 +215,69 @@ class DynamicEulerBernoulliBeam:
 
         return conditions
 
-    def _precompute_fluid_coefficients(self) -> None:
-        """Precompute fluid dynamics coefficients using state mapping."""
-        if not self.fluid_params.enable_fluid_effects:
-            return
+    def _auto_register_forces(self) -> None:
+        """Auto-register force components based on beam configuration."""
+        # Register fluid drag forces if enabled
+        if self.fluid_params.enable_fluid_effects:
+            fluid_force = FluidDragForce(self)
+            self.force_registry.register(fluid_force)
 
-        # Get wetted areas and drag coefficients directly from params
-        wetted_areas = self.params["wetted_area"].values
-        drag_coefs = self.params["drag_coef"].values
+    def create_system_func(self, forces_func: Callable = None) -> None:
+        """Create system matrix function A(x) using unified beam model.
 
-        # Add one more for final node (use last segment values)
-        wetted_areas = np.append(wetted_areas, wetted_areas[-1])
-        drag_coefs = np.append(drag_coefs, drag_coefs[-1])
-
-        n_nodes = len(wetted_areas)
-
-        # Dictionary to map nodes to their 'dw_dt' state indices
-        node_to_dw_dt_idx = {}
-        # Dictionary to map nodes to their 'w' state indices
-        node_to_w_idx = {}
-
-        # Find all transverse velocity 'dw_dt' parameters and their corresponding 'w' positions
-        for idx, (param, node) in self.state_to_node_param.items():
-            if param == "dw_dt" and node < n_nodes:
-                node_to_dw_dt_idx[node] = idx
-            elif param == "w" and node < n_nodes:
-                node_to_w_idx[node] = idx
-
-        # Build arrays of corresponding indices and drag factors
-        w_vel_indices = []  # Indices in state vector for dw_dt
-        w_pos_indices = []  # Corresponding indices for w positions
-        drag_factors = []  # Drag factor for each node
-
-        # Only include nodes that have both position and velocity state entries
-        for node in sorted(set(node_to_dw_dt_idx.keys()) & set(node_to_w_idx.keys())):
-            if node < len(wetted_areas) and node < len(drag_coefs):
-                w_vel_indices.append(node_to_dw_dt_idx[node])
-                w_pos_indices.append(node_to_w_idx[node])
-                drag_factor = (
-                    0.5
-                    * self.fluid_params.fluid_density
-                    * drag_coefs[node]
-                    * wetted_areas[node]
-                )
-                drag_factors.append(drag_factor)
-
-        # Number of position/velocity states
-        n_pos_states = len(self.state_to_node_param) // 2
-
-        # Store the computed coefficients
-        self.fluid_coefficients = {
-            "w_vel_indices": w_vel_indices,  # Indices of 'dw_dt' velocities in state vector
-            "w_pos_indices": w_pos_indices,  # Indices of 'w' positions in state vector
-            "drag_factors": drag_factors,  # Drag factors for each node
-            "n_pos_states": n_pos_states,  # Number of position states
-        }
-
-    def create_system_func(self) -> None:
-        """Create system matrix function A(x) using unified beam model."""
+        Args:
+            forces_func: Optional external force function that computes forces(x, t).
+                        If None, uses forces from the internal force registry.
+        """
         M_inv = self.M_inv
 
-        if self.fluid_params.enable_fluid_effects and self.fluid_coefficients:
-            # Get precomputed coefficients
-            w_vel_indices = self.fluid_coefficients["w_vel_indices"]
-            w_pos_indices = self.fluid_coefficients["w_pos_indices"]
-            drag_factors = self.fluid_coefficients["drag_factors"]
+        # Use provided forces function or create from registry
+        if forces_func is None:
+            forces_func = self.force_registry.create_aggregated_function()
 
-            def system_with_fluid(x):
-                n_states = len(x) // 2
-                positions = x[:n_states]
-                velocities = x[n_states:]
+        def system(x):
+            n_states = len(x) // 2
+            positions = x[:n_states]
+            velocities = x[n_states:]
 
-                # Calculate stiffness forces using unified beam model
-                k_x = self.beam_model.get_stiffness_function()(positions)
+            # Calculate stiffness forces using unified beam model
+            k_x = self.beam_model.get_stiffness_function()(positions)
 
-                # Create drag forces vector (zeros initially)
-                drag_forces = np.zeros_like(velocities)
+            # Get additional forces from external function
+            additional_forces = forces_func(x, 0.0)
 
-                # Apply drag forces based on transverse velocities
-                for i in range(len(w_vel_indices)):
-                    if i < len(drag_factors) and i < len(w_pos_indices):
-                        vel_idx = w_vel_indices[i]
-                        pos_idx = w_pos_indices[i]
-                        # Calculate relative position in velocities array
-                        force_idx = pos_idx
-                        vel = x[vel_idx]
-                        drag_factor = drag_factors[i]
-                        # Nonlinear drag proportional to velocity^2
-                        drag_force = -drag_factor * vel * np.abs(vel)
-                        # Apply force at the position index
-                        drag_forces[force_idx] = drag_force
+            return np.concatenate(
+                [
+                    velocities,
+                    -M_inv.dot(k_x) + M_inv.dot(additional_forces),
+                ]
+            )
 
-                # Combine position derivatives (velocities) with
-                # velocity derivatives (accelerations = forces/mass)
-                return np.concatenate(
-                    [
-                        velocities,
-                        -M_inv.dot(k_x) + M_inv.dot(drag_forces),
-                    ]
-                )
+        self.system_func = system
 
-            self.system_func = system_with_fluid
-        else:
+    def create_input_func(self, input_processor_func: Callable = None) -> None:
+        """Create input matrix function B(x, u) using unified beam model.
 
-            def system(x):
-                n_states = len(x) // 2
-                positions = x[:n_states]
-                velocities = x[n_states:]
+        Args:
+            input_processor_func: Optional external input processing function that
+                                computes input_modifications(x, u, t).
+                                If None, uses processors from the internal input registry.
+        """
 
-                # Calculate stiffness forces using unified beam model
-                k_x = self.beam_model.get_stiffness_function()(positions)
+        # Use provided input processor or create from registry
+        if input_processor_func is None:
+            input_processor_func = self.input_registry.create_aggregated_function()
 
-                return np.concatenate([velocities, -M_inv.dot(k_x)])
-
-            self.system_func = system
-
-    def create_input_func(self) -> None:
-        """Create input matrix function B(x) using unified beam model."""
-
-        def input_function(x: np.ndarray) -> np.ndarray:
+        def input_function(x: np.ndarray, u: np.ndarray) -> np.ndarray:
             n = len(x) // 2
             M_inv = self.M_inv
 
+            # Process input through external function (gets modifications)
+            processed_input = input_processor_func(x, u, 0.0)
+
+            # Create input matrix and apply to processed input
             B = sparse.bmat([[sparse.csr_matrix((n, n))], [M_inv]], format="csr")
-            return B
+            return B.dot(processed_input)
 
         self.input_func = input_function
 
@@ -389,6 +311,6 @@ class DynamicEulerBernoulliBeam:
             else:
                 force = u
 
-            return self.system_func(x) + self.input_func(x).dot(force)
+            return self.system_func(x) + self.input_func(x, force)
 
         return dynamic_system
