@@ -159,16 +159,6 @@ class EulerBernoulliBeam(IBeam):
         """Create global stiffness function from segments."""
         n_segments = len(self.segments)
 
-        # Separate linear and nonlinear segments for efficient handling
-        linear_segments = []
-        nonlinear_segments = []
-
-        for i, segment in enumerate(self.segments):
-            if segment.get_element_type() == ElementType.LINEAR:
-                linear_segments.append((i, segment))
-            else:
-                nonlinear_segments.append((i, segment))
-
         def global_stiffness_function(x: np.ndarray) -> np.ndarray:
             """
             Compute global stiffness forces from state vector.
@@ -182,26 +172,19 @@ class EulerBernoulliBeam(IBeam):
             n_nodes = n_segments + 1
             global_forces = np.zeros(3 * n_nodes)
 
-            # Process linear segments (constant stiffness matrices)
-            for i, segment in linear_segments:
+            # Process all segments in order (preserving beam sequence)
+            for i, segment in enumerate(self.segments):
                 start_idx = 3 * i
                 segment_state = x[start_idx : start_idx + 6]
-                stiffness_matrix = (
-                    segment.get_stiffness_func()
-                )  # Returns matrix for linear
-                segment_forces = stiffness_matrix.dot(segment_state)
 
-                # Assemble into global force vector
-                self._assemble_segment_forces(global_forces, segment_forces, i)
+                stiffness_func_or_matrix = segment.get_stiffness_func()
 
-            # Process nonlinear segments (state-dependent stiffness functions)
-            for i, segment in nonlinear_segments:
-                start_idx = 3 * i
-                segment_state = x[start_idx : start_idx + 6]
-                stiffness_func = (
-                    segment.get_stiffness_func()
-                )  # Returns function for nonlinear
-                segment_forces = stiffness_func(segment_state)
+                if callable(stiffness_func_or_matrix):
+                    # Nonlinear: function that takes state and returns forces
+                    segment_forces = stiffness_func_or_matrix(segment_state)
+                else:
+                    # Linear: matrix that we multiply by state
+                    segment_forces = stiffness_func_or_matrix @ segment_state
 
                 # Assemble into global force vector
                 self._assemble_segment_forces(global_forces, segment_forces, i)
