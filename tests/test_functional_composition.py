@@ -7,6 +7,7 @@ from scipy.integrate import solve_ivp
 from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
 from continuum_robot.models.fluid_forces import FluidDynamicsParams, FluidDragForce
 from continuum_robot.models.force_registry import ForceRegistry, InputRegistry
+from continuum_robot.models.gravity_forces import GravityForce
 from continuum_robot.models.abstractions import AbstractForce, AbstractInputHandler
 
 
@@ -69,16 +70,9 @@ class MockInputHandler(AbstractInputHandler):
         return self.enabled
 
 
-def custom_gravity_force(x, t):
-    """Custom gravity force function for testing."""
-    n_states = len(x) // 2
-    gravity_forces = np.zeros(n_states)
-
-    # Apply downward gravity force on transverse DOFs (w)
-    for i in range(1, n_states, 3):  # w DOFs are at indices 1, 4, 7, ...
-        gravity_forces[i] = -9.81 * 8000 * 1e-4 * 0.25  # rho * A * L * g
-
-    return gravity_forces
+def create_gravity_force(beam):
+    """Create GravityForce instance for testing with equivalent behavior."""
+    return GravityForce(beam, gravity_vector=[0.0, -9.81, 0.0])
 
 
 def custom_spring_force(k=1000):
@@ -143,6 +137,42 @@ class TestRegistryBasedForces:
         result = beam.get_system_func()(test_state)
         assert result.shape == (2 * n_dofs,)
 
+    def test_gravity_force_registration(self, beam_file):
+        """Test gravity force registration and behavior."""
+        beam = DynamicEulerBernoulliBeam(beam_file)
+
+        # Initially no forces
+        assert len(beam.force_registry) == 0
+
+        # Register gravity force
+        gravity_force = create_gravity_force(beam)
+        beam.force_registry.register(gravity_force)
+
+        assert len(beam.force_registry) == 1
+        assert gravity_force in beam.force_registry
+
+        # Create system function using registry with gravity
+        beam.create_system_func()
+
+        # Test that gravity force is applied
+        n_dofs = len(beam.state_to_node_param) // 2
+        test_state = np.zeros(2 * n_dofs)
+        result = beam.get_system_func()(test_state)
+
+        # Should see effect of gravity force on accelerations (second half of state derivative)
+        accelerations = result[n_dofs:]
+        assert not np.allclose(accelerations, np.zeros_like(accelerations))
+
+        # Check that gravity affects transverse DOFs (w) primarily
+        # For a 4-segment beam with 5 nodes: DOFs 1, 4, 7, 10 should have gravity effects
+        if n_dofs >= 11:  # Ensure we have enough DOFs
+            w_acceleration_indices = [1, 4, 7, 10]  # w DOFs in acceleration part
+            for idx in w_acceleration_indices:
+                if idx < len(accelerations):
+                    assert (
+                        abs(accelerations[idx]) > 1e-10
+                    )  # Should have non-zero gravity acceleration
+
 
 class TestExternalCustomForces:
     """Test external custom force functions."""
@@ -151,11 +181,10 @@ class TestExternalCustomForces:
         """Test system creation with external custom force function."""
         beam = DynamicEulerBernoulliBeam(beam_file)
 
-        # Create custom combined force function
+        # Create custom spring force function (gravity now handled by registry)
         def custom_forces(x, t):
-            gravity = custom_gravity_force(x, t)
             spring = custom_spring_force(k=500)(x, t)
-            return gravity + spring
+            return spring
 
         # Create system with external forces
         beam.create_system_func(custom_forces)
@@ -211,14 +240,18 @@ class TestHybridApproach:
         )
         beam = DynamicEulerBernoulliBeam(beam_file, fluid_params=fluid_params)
 
+        # Add gravity to registry as well
+        gravity_force = create_gravity_force(beam)
+        beam.force_registry.register(gravity_force)
+
         # Get registry forces function
         registry_forces = beam.force_registry.create_aggregated_function()
 
         def combined_forces(x, t):
-            # Get forces from registry (fluid drag)
+            # Get forces from registry (fluid drag + gravity)
             registry_contrib = registry_forces(x, t)
-            # Add external forces (gravity)
-            external_contrib = custom_gravity_force(x, t)
+            # Add external forces (spring)
+            external_contrib = custom_spring_force(k=200)(x, t)
             return registry_contrib + external_contrib
 
         beam.create_system_func(combined_forces)
@@ -233,11 +266,13 @@ class TestHybridApproach:
         beam_registry_only = DynamicEulerBernoulliBeam(
             beam_file, fluid_params=fluid_params
         )
+        gravity_force_only = create_gravity_force(beam_registry_only)
+        beam_registry_only.force_registry.register(gravity_force_only)
         beam_registry_only.create_system_func()  # Uses registry only
         result_registry_only = beam_registry_only.get_system_func()(test_state)
 
         # Combined forces should be different from registry-only
-        # (assuming gravity contributes something non-zero)
+        # (due to added spring force)
         assert not np.allclose(result, result_registry_only, rtol=1e-10)
 
 

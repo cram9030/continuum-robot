@@ -6,6 +6,7 @@ import time
 
 from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
 from continuum_robot.models.fluid_forces import FluidDynamicsParams
+from continuum_robot.models.gravity_forces import GravityForce
 from continuum_robot.models.abstractions import AbstractForce, AbstractInputHandler
 
 
@@ -95,28 +96,18 @@ class TestAdvancedForceComposition:
         )
         beam = DynamicEulerBernoulliBeam(complex_beam_file, fluid_params=fluid_params)
 
-        # Add state-aware force
+        # Add state-aware force and gravity force to registry
         state_force = StateAwareForce(beam, stiffness=500.0, damping=5.0)
         beam.force_registry.register(state_force)
 
-        # Should now have both fluid and state-aware forces
-        assert len(beam.force_registry) == 2
+        gravity_force = GravityForce(beam, gravity_vector=[0.0, -9.81, 0.0])
+        beam.force_registry.register(gravity_force)
 
-        # Create external force function for gravity
-        def gravity_force(x, t):
-            n_states = len(x) // 2
-            forces = np.zeros(n_states)
-            for i in range(1, n_states, 3):  # Apply to w DOFs
-                forces[i] = -9.81 * 8000 * 1e-4 * 0.2  # rho * A * L * g
-            return forces
+        # Should now have fluid, state-aware, and gravity forces
+        assert len(beam.force_registry) == 3
 
-        # Combine registry forces with external
-        registry_forces = beam.force_registry.create_aggregated_function()
-
-        def total_forces(x, t):
-            return registry_forces(x, t) + gravity_force(x, t)
-
-        beam.create_system_func(total_forces)
+        # Use registry forces directly
+        beam.create_system_func()
 
         # Test with non-zero state to activate state-dependent forces
         n_dofs = len(beam.state_to_node_param) // 2
