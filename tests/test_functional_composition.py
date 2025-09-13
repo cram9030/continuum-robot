@@ -5,7 +5,8 @@ import os
 from scipy.integrate import solve_ivp
 
 from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
-from continuum_robot.models.fluid_forces import FluidDynamicsParams, FluidDragForce
+from continuum_robot.models.force_params import ForceParams
+from continuum_robot.models.fluid_forces import FluidDragForce
 from continuum_robot.models.force_registry import ForceRegistry, InputRegistry
 from continuum_robot.models.gravity_forces import GravityForce
 from continuum_robot.models.abstractions import AbstractForce, AbstractInputHandler
@@ -70,9 +71,9 @@ class MockInputHandler(AbstractInputHandler):
         return self.enabled
 
 
-def create_gravity_force(beam):
+def create_gravity_force(beam_params):
     """Create GravityForce instance for testing with equivalent behavior."""
-    return GravityForce(beam, gravity_vector=[0.0, -9.81, 0.0])
+    return GravityForce(beam_params, gravity_vector=[0.0, -9.81, 0.0])
 
 
 def custom_spring_force(k=1000):
@@ -98,10 +99,8 @@ class TestRegistryBasedForces:
 
     def test_default_registry_with_fluid_forces(self, beam_file):
         """Test default registry behavior with fluid forces enabled."""
-        fluid_params = FluidDynamicsParams(
-            fluid_density=1000.0, enable_fluid_effects=True
-        )
-        beam = DynamicEulerBernoulliBeam(beam_file, fluid_params=fluid_params)
+        force_params = ForceParams(fluid_density=1000.0, enable_fluid_effects=True)
+        beam = DynamicEulerBernoulliBeam(beam_file, force_params=force_params)
 
         # Check that fluid force was auto-registered
         assert len(beam.force_registry) == 1
@@ -139,17 +138,13 @@ class TestRegistryBasedForces:
 
     def test_gravity_force_registration(self, beam_file):
         """Test gravity force registration and behavior."""
-        beam = DynamicEulerBernoulliBeam(beam_file)
+        force_params = ForceParams(enable_gravity_effects=True)
+        beam = DynamicEulerBernoulliBeam(beam_file, force_params=force_params)
 
-        # Initially no forces
-        assert len(beam.force_registry) == 0
-
-        # Register gravity force
-        gravity_force = create_gravity_force(beam)
-        beam.force_registry.register(gravity_force)
-
+        # Should have auto-registered gravity force
         assert len(beam.force_registry) == 1
-        assert gravity_force in beam.force_registry
+        forces = beam.force_registry.get_registered_forces()
+        assert isinstance(forces[0], GravityForce)
 
         # Create system function using registry with gravity
         beam.create_system_func()
@@ -235,14 +230,10 @@ class TestHybridApproach:
 
     def test_registry_plus_external_forces(self, beam_file):
         """Test combining registry forces with external forces."""
-        fluid_params = FluidDynamicsParams(
-            fluid_density=1000.0, enable_fluid_effects=True
+        force_params = ForceParams(
+            fluid_density=1000.0, enable_fluid_effects=True, enable_gravity_effects=True
         )
-        beam = DynamicEulerBernoulliBeam(beam_file, fluid_params=fluid_params)
-
-        # Add gravity to registry as well
-        gravity_force = create_gravity_force(beam)
-        beam.force_registry.register(gravity_force)
+        beam = DynamicEulerBernoulliBeam(beam_file, force_params=force_params)
 
         # Get registry forces function
         registry_forces = beam.force_registry.create_aggregated_function()
@@ -264,10 +255,8 @@ class TestHybridApproach:
 
         # Compare with registry-only forces
         beam_registry_only = DynamicEulerBernoulliBeam(
-            beam_file, fluid_params=fluid_params
+            beam_file, force_params=force_params
         )
-        gravity_force_only = create_gravity_force(beam_registry_only)
-        beam_registry_only.force_registry.register(gravity_force_only)
         beam_registry_only.create_system_func()  # Uses registry only
         result_registry_only = beam_registry_only.get_system_func()(test_state)
 
@@ -330,10 +319,8 @@ class TestDynamicForceRegistration:
 
     def test_force_registry_clear(self, beam_file):
         """Test clearing all forces from registry."""
-        fluid_params = FluidDynamicsParams(
-            fluid_density=1000.0, enable_fluid_effects=True
-        )
-        beam = DynamicEulerBernoulliBeam(beam_file, fluid_params=fluid_params)
+        force_params = ForceParams(fluid_density=1000.0, enable_fluid_effects=True)
+        beam = DynamicEulerBernoulliBeam(beam_file, force_params=force_params)
 
         # Should have auto-registered fluid force
         assert len(beam.force_registry) == 1

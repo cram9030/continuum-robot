@@ -6,7 +6,7 @@ import os
 from scipy.integrate import solve_ivp
 
 from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
-from continuum_robot.models.fluid_forces import FluidDynamicsParams
+from continuum_robot.models.force_params import ForceParams
 
 
 @pytest.fixture
@@ -70,25 +70,26 @@ def test_fluid_params_initialization(beam_files):
     """Test initialization with fluid dynamics parameters."""
     linear_file = beam_files[0]
 
-    # Test with default fluid params (disabled)
+    # Test with default force params (disabled)
     beam_default = DynamicEulerBernoulliBeam(linear_file)
-    assert not beam_default.fluid_params.enable_fluid_effects
+    assert not beam_default.force_params.enable_fluid_effects
 
-    # Test with custom fluid params (enabled)
-    fluid_params = FluidDynamicsParams(fluid_density=1000.0, enable_fluid_effects=True)
-    beam_fluid = DynamicEulerBernoulliBeam(linear_file, fluid_params=fluid_params)
-    assert beam_fluid.fluid_params.enable_fluid_effects
-    assert beam_fluid.fluid_params.fluid_density == 1000.0
+    # Test with custom force params (enabled)
+    force_params = ForceParams(fluid_density=1000.0, enable_fluid_effects=True)
+    beam_fluid = DynamicEulerBernoulliBeam(linear_file, force_params=force_params)
+    assert beam_fluid.force_params.enable_fluid_effects
+    assert beam_fluid.force_params.fluid_density == 1000.0
 
 
 def test_invalid_fluid_params(beam_files):
     """Test initialization with invalid fluid parameters."""
-    linear_file = beam_files[0]
 
-    # Test with negative fluid density
-    fluid_params = FluidDynamicsParams(fluid_density=-1.0, enable_fluid_effects=True)
-    with pytest.raises(ValueError, match="Fluid density must be positive"):
-        DynamicEulerBernoulliBeam(linear_file, fluid_params=fluid_params)
+    # Test with negative fluid density - should fail at ForceParams creation
+    with pytest.raises(
+        ValueError,
+        match="fluid_density must be positive when fluid effects are enabled",
+    ):
+        ForceParams(fluid_density=-1.0, enable_fluid_effects=True)
 
 
 def test_invalid_file():
@@ -126,10 +127,8 @@ def test_missing_fluid_columns():
         temp_file.close()  # Close the file to ensure it's written to disk
 
         with pytest.raises(ValueError, match="CSV must contain columns"):
-            fluid_params = FluidDynamicsParams(
-                fluid_density=-1.0, enable_fluid_effects=True
-            )
-            DynamicEulerBernoulliBeam(temp_file.name, fluid_params=fluid_params)
+            force_params = ForceParams(fluid_density=1000.0, enable_fluid_effects=True)
+            DynamicEulerBernoulliBeam(temp_file.name, force_params=force_params)
     finally:
         # Clean up
         os.unlink(temp_file.name)
@@ -177,11 +176,11 @@ def test_system_creation_with_fluid(beam_files):
     """Test system function creation with fluid dynamics enabled."""
     linear_file, nonlinear_file = beam_files
 
-    # Create fluid params
-    fluid_params = FluidDynamicsParams(fluid_density=1000.0, enable_fluid_effects=True)
+    # Create force params with fluid dynamics
+    force_params = ForceParams(fluid_density=1000.0, enable_fluid_effects=True)
 
     # Test linear beam with fluid dynamics
-    linear_beam = DynamicEulerBernoulliBeam(linear_file, fluid_params=fluid_params)
+    linear_beam = DynamicEulerBernoulliBeam(linear_file, force_params=force_params)
     linear_beam.create_system_func()
     linear_beam.create_input_func()
 
@@ -190,7 +189,7 @@ def test_system_creation_with_fluid(beam_files):
 
     # Test nonlinear beam with fluid dynamics
     nonlinear_beam = DynamicEulerBernoulliBeam(
-        nonlinear_file, fluid_params=fluid_params
+        nonlinear_file, force_params=force_params
     )
     nonlinear_beam.create_system_func()
     nonlinear_beam.create_input_func()
@@ -250,11 +249,11 @@ def test_solve_linear_beam_ivp_with_fluid(beam_files):
     linear_file = beam_files[0]
     t_span = [0, 0.1]
 
-    # Create fluid params
-    fluid_params = FluidDynamicsParams(fluid_density=1000.0, enable_fluid_effects=True)
+    # Create force params with fluid dynamics
+    force_params = ForceParams(fluid_density=1000.0, enable_fluid_effects=True)
 
     # Test linear system with fluid dynamics
-    linear_beam = DynamicEulerBernoulliBeam(linear_file, fluid_params=fluid_params)
+    linear_beam = DynamicEulerBernoulliBeam(linear_file, force_params=force_params)
     linear_beam.create_system_func()
     linear_beam.create_input_func()
     linear_system = linear_beam.get_dynamic_system()
@@ -321,12 +320,12 @@ def test_solve_nonlinear_with_fluid(beam_files):
     nonlinear_file = beam_files[1]  # Use the nonlinear beam file
     t_span = [0, 0.1]
 
-    # Create fluid params
-    fluid_params = FluidDynamicsParams(fluid_density=1000.0, enable_fluid_effects=True)
+    # Create force params with fluid dynamics
+    force_params = ForceParams(fluid_density=1000.0, enable_fluid_effects=True)
 
     # Test nonlinear system with fluid dynamics
     nonlinear_beam_fluid = DynamicEulerBernoulliBeam(
-        nonlinear_file, fluid_params=fluid_params
+        nonlinear_file, force_params=force_params
     )
     nonlinear_beam_fluid.create_system_func()
     nonlinear_beam_fluid.create_input_func()
@@ -373,11 +372,9 @@ def test_solve_nonlinear_with_fluid(beam_files):
     assert vel_fluid < vel_no_fluid, "Fluid dynamics should cause damping effect"
 
     # Test with different fluid densities to ensure correct scaling
-    fluid_params_dense = FluidDynamicsParams(
-        fluid_density=2000.0, enable_fluid_effects=True
-    )
+    force_params_dense = ForceParams(fluid_density=2000.0, enable_fluid_effects=True)
     nonlinear_beam_dense = DynamicEulerBernoulliBeam(
-        nonlinear_file, fluid_params=fluid_params_dense
+        nonlinear_file, force_params=force_params_dense
     )
     nonlinear_beam_dense.create_system_func()
     nonlinear_beam_dense.create_input_func()
@@ -517,8 +514,8 @@ def test_state_mapping_with_boundary_conditions(beam_files):
 
 def test_fluid_coefficients_mapping(beam_file_with_fluid):
     """Test fluid coefficient mapping to transverse DOFs only."""
-    fluid_params = FluidDynamicsParams(fluid_density=1000.0, enable_fluid_effects=True)
-    beam = DynamicEulerBernoulliBeam(beam_file_with_fluid, fluid_params=fluid_params)
+    force_params = ForceParams(fluid_density=1000.0, enable_fluid_effects=True)
+    beam = DynamicEulerBernoulliBeam(beam_file_with_fluid, force_params=force_params)
 
     # Get the FluidDragForce component from the force registry
     force_components = beam.force_registry.get_registered_forces()

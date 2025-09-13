@@ -5,8 +5,7 @@ import os
 import time
 
 from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
-from continuum_robot.models.fluid_forces import FluidDynamicsParams
-from continuum_robot.models.gravity_forces import GravityForce
+from continuum_robot.models.force_params import ForceParams
 from continuum_robot.models.abstractions import AbstractForce, AbstractInputHandler
 
 
@@ -91,19 +90,16 @@ class TestAdvancedForceComposition:
 
     def test_multiple_force_types_composition(self, complex_beam_file):
         """Test composition of multiple different force types."""
-        fluid_params = FluidDynamicsParams(
-            fluid_density=1000.0, enable_fluid_effects=True
+        force_params = ForceParams(
+            fluid_density=1000.0, enable_fluid_effects=True, enable_gravity_effects=True
         )
-        beam = DynamicEulerBernoulliBeam(complex_beam_file, fluid_params=fluid_params)
+        beam = DynamicEulerBernoulliBeam(complex_beam_file, force_params=force_params)
 
-        # Add state-aware force and gravity force to registry
+        # Add state-aware force to registry
         state_force = StateAwareForce(beam, stiffness=500.0, damping=5.0)
         beam.force_registry.register(state_force)
 
-        gravity_force = GravityForce(beam, gravity_vector=[0.0, -9.81, 0.0])
-        beam.force_registry.register(gravity_force)
-
-        # Should now have fluid, state-aware, and gravity forces
+        # Should now have fluid, gravity, and state-aware forces
         assert len(beam.force_registry) == 3
 
         # Use registry forces directly
@@ -402,10 +398,10 @@ class TestComplexIntegrationScenarios:
 
     def test_full_simulation_with_composition(self, complex_beam_file):
         """Test full simulation pipeline with composed forces."""
-        fluid_params = FluidDynamicsParams(
-            fluid_density=1000.0, enable_fluid_effects=True
+        force_params = ForceParams(
+            fluid_density=1000.0, enable_fluid_effects=True, enable_gravity_effects=True
         )
-        beam = DynamicEulerBernoulliBeam(complex_beam_file, fluid_params=fluid_params)
+        beam = DynamicEulerBernoulliBeam(complex_beam_file, force_params=force_params)
 
         # Add additional forces
         state_force = StateAwareForce(beam, stiffness=500.0, damping=10.0)

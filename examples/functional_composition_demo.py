@@ -13,7 +13,7 @@ import tempfile
 import os
 from pathlib import Path
 from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
-from continuum_robot.models.fluid_forces import FluidDynamicsParams
+from continuum_robot.models.force_params import ForceParams
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -72,10 +72,8 @@ def main():
 
         # 1. Registry-based approach (default)
         print("1. Registry-based approach (with fluid drag):")
-        fluid_params = FluidDynamicsParams(
-            fluid_density=1000.0, enable_fluid_effects=True
-        )
-        beam1 = DynamicEulerBernoulliBeam(beam_file, fluid_params=fluid_params)
+        force_params = ForceParams(fluid_density=1000.0, enable_fluid_effects=True)
+        beam1 = DynamicEulerBernoulliBeam(beam_file, force_params=force_params)
 
         print(f"   Force registry has {len(beam1.force_registry)} registered forces")
         beam1.create_system_func()  # Uses default registry forces
@@ -98,7 +96,7 @@ def main():
 
         # 3. Hybrid approach: registry + external forces
         print("\n3. Hybrid approach (registry + external):")
-        beam3 = DynamicEulerBernoulliBeam(beam_file, fluid_params=fluid_params)
+        beam3 = DynamicEulerBernoulliBeam(beam_file, force_params=force_params)
 
         # Get registry forces and combine with external
         registry_forces = beam3.force_registry.create_aggregated_function()
@@ -119,12 +117,13 @@ def main():
         print("\n4. Dynamic force registration:")
         beam4 = DynamicEulerBernoulliBeam(beam_file)
 
-        # Manually register a fluid force later
-        if beam4.fluid_params.enable_fluid_effects:
-            from continuum_robot.models.fluid_forces import FluidDragForce
+        # Manually register a gravity force later
+        if not beam4.force_params.enable_gravity_effects:
+            from continuum_robot.models.gravity_forces import GravityForce
 
-            custom_fluid = FluidDragForce(beam4)
-            beam4.force_registry.register(custom_fluid)
+            beam_data = beam4.params[["density", "cross_area", "length"]]
+            custom_gravity = GravityForce(beam_data, gravity_vector=[0.0, -9.81, 0.0])
+            beam4.force_registry.register(custom_gravity)
 
         print(
             f"   Force registry now has {len(beam4.force_registry)} registered forces"

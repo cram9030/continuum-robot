@@ -24,15 +24,20 @@ class FluidDynamicsParams:
 class FluidDragForce(AbstractForce):
     """Fluid drag force implementation for transverse beam motion."""
 
-    def __init__(self, dynamic_beam_instance):
+    def __init__(self, fluid_data, state_mapping, fluid_density, enabled=True):
         """
-        Initialize fluid drag force with reference to dynamic beam instance.
+        Initialize fluid drag force with necessary data for precomputation.
 
         Args:
-            dynamic_beam_instance: The DynamicEulerBernoulliBeam instance
+            fluid_data: DataFrame with 'wetted_area' and 'drag_coef' columns
+            state_mapping: Dictionary mapping state indices to (parameter, node) pairs
+            fluid_density: Fluid density for drag force calculations
+            enabled: Whether this force component is enabled
         """
-        self.beam = dynamic_beam_instance
-        self.fluid_params = dynamic_beam_instance.fluid_params
+        self.fluid_data = fluid_data
+        self.state_mapping = state_mapping
+        self.fluid_density = fluid_density
+        self.enabled = enabled
         self.fluid_coefficients = None
 
         if self.is_enabled():
@@ -40,16 +45,16 @@ class FluidDragForce(AbstractForce):
 
     def is_enabled(self) -> bool:
         """Return True if fluid effects are enabled."""
-        return self.fluid_params.enable_fluid_effects
+        return self.enabled
 
     def _precompute_fluid_coefficients(self) -> None:
         """Precompute fluid dynamics coefficients using state mapping."""
         if not self.is_enabled():
             return
 
-        # Get wetted areas and drag coefficients directly from params
-        wetted_areas = self.beam.params["wetted_area"].values
-        drag_coefs = self.beam.params["drag_coef"].values
+        # Get wetted areas and drag coefficients from fluid data
+        wetted_areas = self.fluid_data["wetted_area"].values
+        drag_coefs = self.fluid_data["drag_coef"].values
 
         # Add one more for final node (use last segment values)
         wetted_areas = np.append(wetted_areas, wetted_areas[-1])
@@ -63,7 +68,7 @@ class FluidDragForce(AbstractForce):
         node_to_w_idx = {}
 
         # Find all transverse velocity 'dw_dt' parameters and their corresponding 'w' positions
-        for idx, (param, node) in self.beam.state_to_node_param.items():
+        for idx, (param, node) in self.state_mapping.items():
             if param == "dw_dt" and node < n_nodes:
                 node_to_dw_dt_idx[node] = idx
             elif param == "w" and node < n_nodes:
@@ -80,15 +85,12 @@ class FluidDragForce(AbstractForce):
                 w_vel_indices.append(node_to_dw_dt_idx[node])
                 w_pos_indices.append(node_to_w_idx[node])
                 drag_factor = (
-                    0.5
-                    * self.fluid_params.fluid_density
-                    * drag_coefs[node]
-                    * wetted_areas[node]
+                    0.5 * self.fluid_density * drag_coefs[node] * wetted_areas[node]
                 )
                 drag_factors.append(drag_factor)
 
         # Number of position/velocity states
-        n_pos_states = len(self.beam.state_to_node_param) // 2
+        n_pos_states = len(self.state_mapping) // 2
 
         # Store the computed coefficients
         self.fluid_coefficients = {
