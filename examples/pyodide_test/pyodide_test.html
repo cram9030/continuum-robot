@@ -78,7 +78,7 @@
                     // Run the tests
                     let output = await pyodide.runPythonAsync(`
     import numpy as np
-    from continuum_robot.models import LinearEulerBernoulliBeam
+    from continuum_robot.models import EulerBernoulliBeam
     import pandas as pd
 
     def run_basic_tests():
@@ -91,7 +91,8 @@
                 'elastic_modulus': [75e9] * 4,
                 'moment_inertia': [4.91e-10] * 4,
                 'density': [6450] * 4,
-                'cross_area': [7.85e-5] * 4
+                'cross_area': [7.85e-5] * 4,
+                'type': ['linear'] * 4
             }
             df = pd.DataFrame(data)
             results.append(("✓ Created parameter DataFrame", True))
@@ -100,29 +101,35 @@
 
         # Test 2: Initialize beam
         try:
-            beam = LinearEulerBernoulliBeam(df, 0.01)
+            beam = EulerBernoulliBeam(df)
             results.append(("✓ Beam initialized", True))
         except Exception as e:
             results.append((f"✗ Beam initialization failed: {str(e)}", False))
 
-        # Test 3: Create matrices
+        # Test 3: Check matrices exist
         try:
-            beam.create_stiffness_matrix()
-            beam.create_mass_matrix()
-            results.append(("✓ Matrices created", True))
-        except Exception as e:
-            results.append((f"✗ Matrix creation failed: {str(e)}", False))
-
-        # Test 4: Get matrices
-        try:
-            K = beam.get_stiffness_matrix()
-            M = beam.get_mass_matrix()
-            if isinstance(K, np.ndarray) and isinstance(M, np.ndarray):
-                results.append(("✓ Retrieved matrices", True))
+            # EulerBernoulliBeam creates matrices automatically in constructor
+            if hasattr(beam, 'M') and beam.M is not None:
+                results.append(("✓ Mass matrix exists", True))
             else:
-                results.append(("✗ Matrix retrieval returned wrong type", False))
+                results.append(("✗ Mass matrix not found", False))
+            if hasattr(beam, 'stiffness_func') and beam.stiffness_func is not None:
+                results.append(("✓ Stiffness function exists", True))
+            else:
+                results.append(("✗ Stiffness function not found", False))
         except Exception as e:
-            results.append((f"✗ Matrix retrieval failed: {str(e)}", False))
+            results.append((f"✗ Matrix check failed: {str(e)}", False))
+
+        # Test 4: Get matrices and functions
+        try:
+            M = beam.get_mass_matrix()  # Returns dense matrix
+            stiffness_func = beam.get_stiffness_function()  # Returns function
+            if isinstance(M, np.ndarray) and callable(stiffness_func):
+                results.append(("✓ Retrieved mass matrix and stiffness function", True))
+            else:
+                results.append(("✗ Matrix/function retrieval returned wrong type", False))
+        except Exception as e:
+            results.append((f"✗ Matrix/function retrieval failed: {str(e)}", False))
 
         return results
 
