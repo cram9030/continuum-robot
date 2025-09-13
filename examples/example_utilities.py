@@ -13,11 +13,8 @@ import time
 from typing import Tuple, Any, Optional
 from dataclasses import dataclass
 
-from continuum_robot.models.dynamic_beam_model import (
-    DynamicEulerBernoulliBeam,
-    FluidDynamicsParams,
-)
-from continuum_robot.models.gravity_forces import GravityForce
+from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
+from continuum_robot.models.force_params import ForceParams
 
 # Simulation parameters
 T_FINAL = 1  # seconds
@@ -82,8 +79,12 @@ class SimulationTask:
 
     name: str
     param_file: str
-    fluid_params: Optional[FluidDynamicsParams]
-    enable_gravity: bool = False
+    force_params: Optional[ForceParams] = None
+
+    def __post_init__(self):
+        """Set default force params if none provided."""
+        if self.force_params is None:
+            self.force_params = ForceParams()
 
 
 def create_beam_parameters() -> Tuple[str, str, str]:
@@ -126,12 +127,7 @@ def simulate_single_beam(task: SimulationTask) -> Tuple[str, Any, float, dict]:
     start_time = time.time()
 
     # Initialize beam model with the provided parameter file
-    beam = DynamicEulerBernoulliBeam(task.param_file, fluid_params=task.fluid_params)
-
-    # Add gravity force to registry if requested
-    if task.enable_gravity:
-        gravity_force = GravityForce(beam, gravity_vector=[0.0, -9.81, 0.0])
-        beam.force_registry.register(gravity_force)
+    beam = DynamicEulerBernoulliBeam(task.param_file, force_params=task.force_params)
 
     beam.create_system_func()
     beam.create_input_func()

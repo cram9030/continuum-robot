@@ -7,8 +7,10 @@ import pathlib
 
 from .abstractions import ElementType, BoundaryConditionType
 from .euler_bernoulli_beam import EulerBernoulliBeam
-from .fluid_forces import FluidDragForce, FluidDynamicsParams
+from .fluid_forces import FluidDragForce
+from .gravity_forces import GravityForce
 from .force_registry import ForceRegistry, InputRegistry
+from .force_params import ForceParams
 
 
 class DynamicEulerBernoulliBeam:
@@ -23,22 +25,22 @@ class DynamicEulerBernoulliBeam:
     def __init__(
         self,
         filename: Union[str, pathlib.Path],
-        fluid_params: FluidDynamicsParams = None,
+        force_params: ForceParams = None,
     ):
         """
         Initialize dynamic beam model from CSV file.
 
         Args:
             filename: Path to CSV containing beam parameters and element types
-            fluid_params: Optional fluid dynamics parameters for simulating beam
-                          motion through a fluid medium
+            force_params: Optional force parameters for configuring all force effects
+                         (fluid dynamics, gravity, etc.)
 
         Raises:
             FileNotFoundError: If file doesn't exist
             ValueError: If parameters are invalid
         """
-        # Set fluid dynamics parameters
-        self.fluid_params = fluid_params or FluidDynamicsParams()
+        # Set force parameters
+        self.force_params = force_params or ForceParams()
 
         # Read and validate parameters
         self.params = pd.read_csv(filename)
@@ -84,7 +86,7 @@ class DynamicEulerBernoulliBeam:
         ]
 
         # Add fluid-specific columns if fluid effects are enabled
-        if self.fluid_params.enable_fluid_effects:
+        if self.force_params.enable_fluid_effects:
             required_cols.extend(["wetted_area", "drag_coef"])
 
         if not all(col in self.params.columns for col in required_cols):
@@ -103,8 +105,8 @@ class DynamicEulerBernoulliBeam:
             raise ValueError(f"Invalid boundary conditions: {invalid_bcs}")
 
         # Validate fluid parameters if enabled
-        if self.fluid_params.enable_fluid_effects:
-            if self.fluid_params.fluid_density <= 0:
+        if self.force_params.enable_fluid_effects:
+            if self.force_params.fluid_density <= 0:
                 raise ValueError("Fluid density must be positive")
 
             # Validate drag coefficients in data
@@ -218,9 +220,25 @@ class DynamicEulerBernoulliBeam:
     def _auto_register_forces(self) -> None:
         """Auto-register force components based on beam configuration."""
         # Register fluid drag forces if enabled
-        if self.fluid_params.enable_fluid_effects:
-            fluid_force = FluidDragForce(self)
+        if self.force_params.enable_fluid_effects:
+            fluid_data = self.params[["wetted_area", "drag_coef"]]
+            fluid_force = FluidDragForce(
+                fluid_data=fluid_data,
+                state_mapping=self.state_to_node_param,
+                fluid_density=self.force_params.fluid_density,
+                enabled=True,
+            )
             self.force_registry.register(fluid_force)
+
+        # Register gravity forces if enabled
+        if self.force_params.enable_gravity_effects:
+            beam_data = self.params[["density", "cross_area", "length"]]
+            gravity_force = GravityForce(
+                beam_params=beam_data,
+                gravity_vector=self.force_params.get_gravity_vector(),
+                enabled=True,
+            )
+            self.force_registry.register(gravity_force)
 
     def create_system_func(self, forces_func: Callable = None) -> None:
         """Create system matrix function A(x) using unified beam model.

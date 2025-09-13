@@ -1,5 +1,4 @@
 import numpy as np
-import warnings
 from typing import List, Optional
 from .abstractions import AbstractForce
 
@@ -25,7 +24,7 @@ class GravityForce(AbstractForce):
 
     def __init__(
         self,
-        beam_instance,
+        beam_params,
         gravity_vector: Optional[List[float]] = None,
         enabled: bool = True,
     ):
@@ -33,12 +32,12 @@ class GravityForce(AbstractForce):
         Initialize gravity force component.
 
         Args:
-            beam_instance: Reference to the beam object containing segment properties
+            beam_params: DataFrame with beam segment properties (density, cross_area, length)
             gravity_vector: 3D gravity acceleration vector [gx, gy, gz] (m/s²)
                           Defaults to [0, -9.81, 0] (standard downward gravity)
             enabled: Whether this force component is enabled
         """
-        self.beam = beam_instance
+        self.beam_params = beam_params
         self.gravity_vector = np.array(
             gravity_vector if gravity_vector is not None else [0.0, -9.81, 0.0]
         )
@@ -49,31 +48,20 @@ class GravityForce(AbstractForce):
                 "Gravity vector must have exactly 3 components [gx, gy, gz]"
             )
 
-        # Get segments and pre-compute segment masses
-        # For DynamicEulerBernoulliBeam, segments are in beam.beam_model.segments
-        if hasattr(self.beam, "beam_model") and hasattr(
-            self.beam.beam_model, "segments"
-        ):
-            segments = self.beam.beam_model.segments
-        elif hasattr(self.beam, "segments"):
-            segments = self.beam.segments
-        else:
-            segments = None
+        # Pre-compute segment masses from beam parameters
+        self._precompute_segment_masses()
 
-        if not segments:
-            warnings.warn(
-                "Beam instance does not have segments attribute or segments list is empty. "
-                "GravityForce requires beam segments to compute mass-distributed forces.",
-                UserWarning,
-            )
+    def _precompute_segment_masses(self):
+        """Precompute segment masses from beam parameters."""
+        if not self.enabled:
             self._segment_masses = []
-        else:
-            # Pre-compute segment masses (mass = density * cross_area * length)
-            self._segment_masses = []
-            for segment in segments:
-                props = segment.get_properties()
-                segment_mass = props.density * props.cross_area * props.length
-                self._segment_masses.append(segment_mass)
+            return
+
+        # Pre-compute segment masses (mass = density * cross_area * length)
+        self._segment_masses = []
+        for _, row in self.beam_params.iterrows():
+            segment_mass = row["density"] * row["cross_area"] * row["length"]
+            self._segment_masses.append(segment_mass)
 
     def compute_forces(self, x: np.ndarray, t: float) -> np.ndarray:
         """

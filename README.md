@@ -149,7 +149,7 @@ The project includes example simulations to demonstrate functionality:
 
 ```bash
 # Run linear beam simulation example
-python examples/beam_comparison_parallel.py
+python examples/beam_comparison_fluid.py
 
 # Run pyodide examples
 examples/pyodide_example/setup_pyode_example.sh

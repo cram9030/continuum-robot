@@ -46,17 +46,22 @@ def main():
 
     try:
         # Define simulation tasks focused on gravity effects
+        from continuum_robot.models.force_params import ForceParams
+
+        gravity_params = ForceParams(enable_gravity_effects=True)
+
         tasks = [
             # With gravity forces
-            SimulationTask("Linear (Gravity)", linear_file, None, enable_gravity=True),
             SimulationTask(
-                "Nonlinear (Gravity)", nonlinear_file, None, enable_gravity=True
+                "Linear (Gravity)", linear_file, force_params=gravity_params
+            ),
+            SimulationTask(
+                "Nonlinear (Gravity)", nonlinear_file, force_params=gravity_params
             ),
             SimulationTask(
                 "Mixed Lin-Base/Nonlin-Tip (Gravity)",
                 mixed_file,
-                None,
-                enable_gravity=True,
+                force_params=gravity_params,
             ),
         ]
 

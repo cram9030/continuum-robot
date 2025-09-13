@@ -13,7 +13,6 @@ from matplotlib.animation import FuncAnimation
 from multiprocessing import Pool, cpu_count
 import time
 
-from continuum_robot.models.dynamic_beam_model import FluidDynamicsParams
 from example_utilities import (
     SimulationTask,
     create_beam_parameters,
@@ -44,22 +43,35 @@ def main():
     linear_file, nonlinear_file, mixed_file = create_beam_parameters()
 
     try:
-        # Create fluid dynamics parameters
-        fluid_params = FluidDynamicsParams(
-            fluid_density=1000.0, enable_fluid_effects=True
-        )
+        # Create force parameters
+        from continuum_robot.models.force_params import ForceParams
+
+        no_forces_params = ForceParams()  # Default: no forces enabled
+        fluid_params = ForceParams(fluid_density=1000.0, enable_fluid_effects=True)
 
         # Define simulation tasks focused on fluid effects
         tasks = [
             # No fluid forces
-            SimulationTask("Linear (No Fluid)", linear_file, None),
-            SimulationTask("Nonlinear (No Fluid)", nonlinear_file, None),
-            SimulationTask("Mixed Lin-Base/Nonlin-Tip (No Fluid)", mixed_file, None),
-            # With fluid forces
-            SimulationTask("Linear (Fluid)", linear_file, fluid_params),
-            SimulationTask("Nonlinear (Fluid)", nonlinear_file, fluid_params),
             SimulationTask(
-                "Mixed Lin-Base/Nonlin-Tip (Fluid)", mixed_file, fluid_params
+                "Linear (No Fluid)", linear_file, force_params=no_forces_params
+            ),
+            SimulationTask(
+                "Nonlinear (No Fluid)", nonlinear_file, force_params=no_forces_params
+            ),
+            SimulationTask(
+                "Mixed Lin-Base/Nonlin-Tip (No Fluid)",
+                mixed_file,
+                force_params=no_forces_params,
+            ),
+            # With fluid forces
+            SimulationTask("Linear (Fluid)", linear_file, force_params=fluid_params),
+            SimulationTask(
+                "Nonlinear (Fluid)", nonlinear_file, force_params=fluid_params
+            ),
+            SimulationTask(
+                "Mixed Lin-Base/Nonlin-Tip (Fluid)",
+                mixed_file,
+                force_params=fluid_params,
             ),
         ]
 
