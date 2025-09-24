@@ -4,8 +4,13 @@ from scipy import sparse
 from typing import Dict, Set, Union, Callable, List
 import pathlib
 
-from .abstractions import IBeam, ElementType, BoundaryConditionType
-from .segments import SegmentFactory, create_properties_from_dataframe
+from .abstractions import (
+    IBeam,
+    ElementType,
+    BoundaryConditionType,
+    create_properties_from_dataframe,
+)
+from .segments import SegmentFactory
 
 
 class EulerBernoulliBeam(IBeam):
