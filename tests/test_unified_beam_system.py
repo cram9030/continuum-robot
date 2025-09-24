@@ -8,12 +8,12 @@ from continuum_robot.models.abstractions import (
     Properties,
     ElementType,
     BoundaryConditionType,
+    create_properties_from_dataframe,
 )
 from continuum_robot.models.segments import (
     LinearSegment,
     NonlinearSegment,
     SegmentFactory,
-    create_properties_from_dataframe,
 )
 from continuum_robot.models.euler_bernoulli_beam import EulerBernoulliBeam
 from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam

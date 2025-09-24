@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 from typing import Union, Callable
 from functools import partial
 
@@ -490,39 +489,3 @@ class SegmentFactory(ISegmentFactory):
     def detect_element_type(self, properties: Properties) -> ElementType:
         """Detect element type from properties using the 'type' column value."""
         return properties.get_element_type()
-
-
-def create_properties_from_dataframe(df: pd.DataFrame, segment_id: int) -> Properties:
-    """
-    Create Properties object from DataFrame row.
-
-    Args:
-        df: DataFrame containing beam parameters
-        segment_id: Index of the segment (row) to create properties for
-
-    Returns:
-        Properties object for the segment
-    """
-    if segment_id >= len(df):
-        raise IndexError(f"Segment ID {segment_id} exceeds DataFrame length {len(df)}")
-
-    row = df.iloc[segment_id]
-
-    # Required properties
-    props_dict = {
-        "length": row["length"],
-        "elastic_modulus": row["elastic_modulus"],
-        "moment_inertia": row["moment_inertia"],
-        "density": row["density"],
-        "cross_area": row["cross_area"],
-        "segment_id": segment_id,
-        "element_type": row["type"],  # This is the key field from CSV
-    }
-
-    # Optional fluid properties
-    if "wetted_area" in df.columns:
-        props_dict["wetted_area"] = row["wetted_area"]
-    if "drag_coef" in df.columns:
-        props_dict["drag_coef"] = row["drag_coef"]
-
-    return Properties(**props_dict)
