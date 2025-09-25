@@ -418,3 +418,94 @@ class EulerBernoulliBeam(IBeam):
         if (param, node_idx) not in self.node_param_to_dof:
             raise KeyError(f"Invalid node/parameter combination: ({node_idx}, {param})")
         return self.node_param_to_dof[(param, node_idx)]
+
+    def get_stiffness_matrix(self) -> np.ndarray:
+        """
+        Get the global stiffness matrix for purely linear beams.
+
+        This method assembles the stiffness matrix directly from linear segment
+        stiffness matrices. It will raise an error if the beam contains any
+        nonlinear segments, as a constant stiffness matrix is only valid for
+        purely linear systems.
+
+        Returns:
+            Global stiffness matrix K assembled from linear segments
+
+        Raises:
+            ValueError: If beam contains any nonlinear segments
+            RuntimeError: If mass matrix has not been assembled yet
+        """
+        if self.M is None:
+            raise RuntimeError(
+                "Mass matrix must be assembled before extracting stiffness matrix"
+            )
+
+        # Check that all segments are linear
+        for segment in self.segments:
+            if segment.get_element_type() != ElementType.LINEAR:
+                raise ValueError(
+                    f"Cannot extract stiffness matrix from beam with nonlinear segments. "
+                    f"Segment {segment.segment_id} is {segment.get_element_type().value}. "
+                    "Stiffness matrix is only valid for purely linear beams."
+                )
+
+        if self._boundary_conditions_applied:
+            # For beams with boundary conditions applied, assemble constrained system
+            return self._assemble_constrained_stiffness_matrix()
+        else:
+            # For unconstrained beams, assemble from segments directly
+            return self._assemble_full_stiffness_matrix()
+
+    def _assemble_full_stiffness_matrix(self) -> np.ndarray:
+        """Assemble stiffness matrix for unconstrained beam."""
+        n_segments = len(self.segments)
+        n_nodes = n_segments + 1
+        n_dofs = n_nodes * 3  # 3 DOFs per node
+
+        stiffness_matrix = np.zeros((n_dofs, n_dofs))
+
+        # Assemble contributions from each segment
+        for i, segment in enumerate(self.segments):
+            # Get 6x6 local stiffness matrix for this segment
+            local_stiffness = segment.get_stiffness_func()
+
+            if not isinstance(local_stiffness, np.ndarray):
+                raise ValueError(
+                    f"Linear segment {segment.segment_id} must return constant stiffness matrix"
+                )
+
+            if local_stiffness.shape != (6, 6):
+                raise ValueError(
+                    f"Segment {segment.segment_id} stiffness matrix must be 6x6"
+                )
+
+            # Map local DOFs to global DOFs
+            # Segment i connects nodes i and i+1
+            global_dofs = []
+            # Node i DOFs
+            for dof in range(3):
+                global_dofs.append(3 * i + dof)
+            # Node i+1 DOFs
+            for dof in range(3):
+                global_dofs.append(3 * (i + 1) + dof)
+
+            # Add local stiffness to global matrix
+            for local_i in range(6):
+                for local_j in range(6):
+                    global_i = global_dofs[local_i]
+                    global_j = global_dofs[local_j]
+                    stiffness_matrix[global_i, global_j] += local_stiffness[
+                        local_i, local_j
+                    ]
+
+        return stiffness_matrix
+
+    def _assemble_constrained_stiffness_matrix(self) -> np.ndarray:
+        """Assemble stiffness matrix for beam with boundary conditions applied."""
+        # First get the full stiffness matrix
+        full_stiffness = self._assemble_full_stiffness_matrix()
+
+        # Use the stored unconstrained DOFs
+        return full_stiffness[
+            np.ix_(self._unconstrained_dofs, self._unconstrained_dofs)
+        ]

@@ -75,7 +75,7 @@ class TimeVaryingInputHandler(AbstractInputHandler):
         self.enabled = enabled
         self.call_count = 0
 
-    def process_input(self, x: np.ndarray, u: np.ndarray, t: float) -> np.ndarray:
+    def compute_input(self, x: np.ndarray, u: np.ndarray, t: float) -> np.ndarray:
         """Apply time-varying gain to input."""
         self.call_count += 1
         gain = self.amplitude * np.sin(2 * np.pi * self.frequency * t)
