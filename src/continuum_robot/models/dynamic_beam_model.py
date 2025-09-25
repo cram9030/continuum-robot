@@ -273,29 +273,59 @@ class DynamicEulerBernoulliBeam:
 
         self.system_func = system
 
-    def create_input_func(self, input_processor_func: Callable = None) -> None:
-        """Create input matrix function B(x, u) using unified beam model.
+    def create_input_func(self) -> None:
+        """
+        Create beam-specific input function that transforms generalized forces to state derivatives.
 
-        Args:
-            input_processor_func: Optional external input processing function that
-                                computes input_modifications(x, u, t).
-                                If None, uses processors from the internal input registry.
+        This function creates the input transformation B*u where B is the input matrix that maps
+        generalized forces (already aggregated externally) through the inverted mass matrix to
+        the beam's state space. The beam is only responsible for this transformation, not for
+        input aggregation, control logic, or disturbance handling.
+
+        The created function signature is (x, u, t) -> state_derivatives where:
+        - x: current state vector [positions, velocities]
+        - u: generalized force vector (pre-aggregated externally)
+        - t: current time (unused by beam, but kept for interface compatibility)
+
+        All control inputs, disturbances, and force aggregation should be handled externally
+        and passed in as the final generalized force vector u.
         """
 
-        # Use provided input processor or create from registry
-        if input_processor_func is None:
-            input_processor_func = self.input_registry.create_aggregated_function()
+        def input_function(x: np.ndarray, u: np.ndarray, t: float = 0.0) -> np.ndarray:
+            """
+            Transform generalized forces to state derivatives through beam dynamics.
 
-        def input_function(t: float, x: np.ndarray, u: np.ndarray) -> np.ndarray:
-            n = len(x) // 2
-            M_inv = self.M_inv
+            Args:
+                x: Current state vector [positions, velocities]
+                u: Generalized force vector applied to position DOFs (pre-aggregated)
+                t: Current time (unused, kept for interface compatibility)
 
-            # Process input through external function (gets modifications)
-            processed_input = input_processor_func(x, u, t)
+            Returns:
+                State derivatives resulting from applied generalized forces
 
-            # Create input matrix and apply to processed input
-            B = sparse.bmat([[sparse.csr_matrix((n, n))], [M_inv]], format="csr")
-            return B.dot(processed_input)
+            Raises:
+                ValueError: If input dimensions are incompatible with beam model
+            """
+            if not isinstance(x, np.ndarray) or not isinstance(u, np.ndarray):
+                raise ValueError("State and input must be numpy arrays")
+
+            if x.ndim != 1 or u.ndim != 1:
+                raise ValueError("State and input must be 1D arrays")
+
+            n = len(x) // 2  # Number of position DOFs
+
+            if len(u) != n:
+                raise ValueError(
+                    f"Input vector length {len(u)} must match position DOFs {n}. "
+                    f"Expected {n}, got {len(u)}"
+                )
+
+            # Transform generalized forces to state derivatives: [0; M^-1 * u]
+            # Upper block: position derivatives are velocities (handled by system_func)
+            # Lower block: velocity derivatives are accelerations = M^-1 * forces
+            B = sparse.bmat([[sparse.csr_matrix((n, n))], [self.M_inv]], format="csr")
+
+            return B.dot(u)
 
         self.input_func = input_function
 
@@ -329,6 +359,6 @@ class DynamicEulerBernoulliBeam:
             else:
                 force = u
 
-            return self.system_func(x) + self.input_func(t, x, force)
+            return self.system_func(x) + self.input_func(x, force, t)
 
         return dynamic_system

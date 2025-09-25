@@ -156,7 +156,7 @@ class InputRegistry:
             for handler in self._input_handlers:
                 if handler.is_enabled():
                     # Each handler contributes a modification to the input
-                    input_contrib = handler.process_input(x, u, t)
+                    input_contrib = handler.compute_input(x, u, t)
                     # Add the handler's contribution (assuming handlers return modifications, not full inputs)
                     total_input += input_contrib
 
