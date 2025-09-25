@@ -11,6 +11,8 @@ dependencies:
   - jupyterlab
   - ipywidgets
   - matplotlib
+  - slycot
+  - control
   - sympy  # Required for SymForce
   - pip
   - pip:

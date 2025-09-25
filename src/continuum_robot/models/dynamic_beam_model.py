@@ -286,12 +286,12 @@ class DynamicEulerBernoulliBeam:
         if input_processor_func is None:
             input_processor_func = self.input_registry.create_aggregated_function()
 
-        def input_function(x: np.ndarray, u: np.ndarray) -> np.ndarray:
+        def input_function(t: float, x: np.ndarray, u: np.ndarray) -> np.ndarray:
             n = len(x) // 2
             M_inv = self.M_inv
 
             # Process input through external function (gets modifications)
-            processed_input = input_processor_func(x, u, 0.0)
+            processed_input = input_processor_func(x, u, t)
 
             # Create input matrix and apply to processed input
             B = sparse.bmat([[sparse.csr_matrix((n, n))], [M_inv]], format="csr")
@@ -329,6 +329,6 @@ class DynamicEulerBernoulliBeam:
             else:
                 force = u
 
-            return self.system_func(x) + self.input_func(x, force)
+            return self.system_func(x) + self.input_func(t, x, force)
 
         return dynamic_system
