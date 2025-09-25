@@ -9,7 +9,8 @@ from continuum_robot.models.force_params import ForceParams
 from continuum_robot.models.fluid_forces import FluidDragForce
 from continuum_robot.models.force_registry import ForceRegistry, InputRegistry
 from continuum_robot.models.gravity_forces import GravityForce
-from continuum_robot.models.abstractions import AbstractForce, AbstractInputHandler
+from continuum_robot.models.abstractions import AbstractForce
+from continuum_robot.control.control_abstractions import AbstractInputHandler
 
 
 @pytest.fixture

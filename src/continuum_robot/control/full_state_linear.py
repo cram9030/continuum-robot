@@ -1,5 +1,5 @@
 import numpy as np
-from ..models.abstractions import AbstractInputHandler
+from .control_abstractions import AbstractInputHandler
 
 
 class FullStateLinear(AbstractInputHandler):
