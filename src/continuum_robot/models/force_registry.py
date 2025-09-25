@@ -1,6 +1,7 @@
 from typing import List, Callable
 import numpy as np
-from .abstractions import AbstractForce, AbstractInputHandler
+from .abstractions import AbstractForce
+from ..control.control_abstractions import AbstractInputHandler
 
 
 class ForceRegistry:

@@ -6,7 +6,8 @@ import time
 
 from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
 from continuum_robot.models.force_params import ForceParams
-from continuum_robot.models.abstractions import AbstractForce, AbstractInputHandler
+from continuum_robot.models.abstractions import AbstractForce
+from continuum_robot.control.control_abstractions import AbstractInputHandler
 
 
 @pytest.fixture
