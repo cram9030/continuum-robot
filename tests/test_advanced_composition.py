@@ -216,7 +216,7 @@ class TestAdvancedInputComposition:
             def __init__(self, beam_instance):
                 self.beam = beam_instance
 
-            def process_input(
+            def compute_input(
                 self, x: np.ndarray, u: np.ndarray, t: float
             ) -> np.ndarray:
                 """Scale input based on tip position."""
@@ -242,13 +242,18 @@ class TestAdvancedInputComposition:
         n_dofs = len(beam.state_to_node_param) // 2
         test_input = np.ones(n_dofs)
 
+        # External aggregation using the registry
+        aggregated_processor = beam.input_registry.create_aggregated_function()
+
         # Test with zero state
         zero_state = np.zeros(2 * n_dofs)
-        result_zero = beam.input_func(zero_state, test_input)
+        processed_zero = aggregated_processor(zero_state, test_input, 0.0)
+        result_zero = beam.input_func(zero_state, processed_zero)
 
         # Test with non-zero state
         nonzero_state = np.random.rand(2 * n_dofs) * 0.01
-        result_nonzero = beam.input_func(nonzero_state, test_input)
+        processed_nonzero = aggregated_processor(nonzero_state, test_input, 0.0)
+        result_nonzero = beam.input_func(nonzero_state, processed_nonzero)
 
         # Results should be different due to state dependency
         assert not np.allclose(result_zero, result_nonzero)

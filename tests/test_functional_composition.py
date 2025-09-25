@@ -63,7 +63,7 @@ class MockInputHandler(AbstractInputHandler):
         self.gain = gain
         self.enabled = enabled
 
-    def process_input(self, x: np.ndarray, u: np.ndarray, t: float) -> np.ndarray:
+    def compute_input(self, x: np.ndarray, u: np.ndarray, t: float) -> np.ndarray:
         """Apply gain to input (returns modification, not full processed input)."""
         return u * self.gain  # Return modification to be added
 
@@ -354,35 +354,35 @@ class TestInputFunctionComposition:
         assert result.shape == (2 * n_dofs,)
 
     def test_external_input_processor(self, beam_file):
-        """Test external input processing function."""
+        """Test external input processing handled outside the beam model."""
         beam = DynamicEulerBernoulliBeam(beam_file)
-
-        def custom_input_processor(x, u, t):
-            """Custom input processor that scales input by 2."""
-            return u * 2.0  # Return modification to be added to original
-
-        beam.create_input_func(custom_input_processor)
+        beam.create_input_func()
 
         n_dofs = len(beam.state_to_node_param) // 2
         test_state = np.random.rand(2 * n_dofs) * 0.01
         test_input = np.random.rand(n_dofs) * 0.1
 
-        result = beam.input_func(test_state, test_input)
+        # External input processing should be handled outside the beam
+        def custom_input_processor(x, u, t):
+            """Custom input processor that scales input by 2."""
+            return u * 2.0  # Return processed input
+
+        # Apply external processing before passing to beam
+        processed_input = custom_input_processor(test_state, test_input, 0.0)
+        result = beam.input_func(test_state, processed_input)
         assert result.shape == (2 * n_dofs,)
 
-        # Compare with default input processor
-        beam_default = DynamicEulerBernoulliBeam(beam_file)
-        beam_default.create_input_func()
-        result_default = beam_default.input_func(test_state, test_input)
+        # Compare with unprocessed input
+        result_default = beam.input_func(test_state, test_input)
 
-        # Should be different due to custom processing
+        # Should be different due to external processing
         assert not np.allclose(result, result_default)
 
     def test_input_registry_functionality(self, beam_file):
-        """Test input registry registration and aggregation."""
+        """Test input registry registration and external aggregation."""
         beam = DynamicEulerBernoulliBeam(beam_file)
 
-        # Register input handlers
+        # Register input handlers in the beam's registry
         handler1 = MockInputHandler(beam, gain=0.1)
         handler2 = MockInputHandler(beam, gain=0.2)
 
@@ -391,14 +391,19 @@ class TestInputFunctionComposition:
 
         assert len(beam.input_registry) == 2
 
-        # Create input function using registry
+        # Create the basic beam input function (no aggregation)
         beam.create_input_func()
 
         n_dofs = len(beam.state_to_node_param) // 2
         test_state = np.random.rand(2 * n_dofs) * 0.01
         test_input = np.ones(n_dofs)  # Unit input for easy calculation
 
-        result = beam.input_func(test_state, test_input)
+        # External aggregation using the registry
+        aggregated_processor = beam.input_registry.create_aggregated_function()
+        processed_input = aggregated_processor(test_state, test_input, 0.0)
+
+        # Apply processed input to beam
+        result = beam.input_func(test_state, processed_input)
 
         # The aggregated function should add both handler contributions
         # handler1: u * 0.1, handler2: u * 0.2
@@ -408,8 +413,8 @@ class TestInputFunctionComposition:
 
         # Compare with manual calculation
         beam_manual = DynamicEulerBernoulliBeam(beam_file)
-        beam_manual.create_input_func(lambda x, u, t: expected_processed_input)
-        result_manual = beam_manual.input_func(test_state, test_input)
+        beam_manual.create_input_func()
+        result_manual = beam_manual.input_func(test_state, expected_processed_input)
 
         assert np.allclose(result, result_manual)
 
