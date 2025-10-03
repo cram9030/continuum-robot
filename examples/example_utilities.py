@@ -17,7 +17,7 @@ from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
 from continuum_robot.models.force_params import ForceParams
 
 # Simulation parameters
-T_FINAL = 1  # seconds
+T_FINAL = 0.1  # seconds (reduced for faster testing)
 DT = 0.001  # Time step for animation
 N_SEGMENTS = 6  # Number of beam segments
 
