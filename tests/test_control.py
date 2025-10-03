@@ -6,7 +6,7 @@ import os
 
 from continuum_robot.models.abstractions import BoundaryConditionType
 from continuum_robot.models.euler_bernoulli_beam import EulerBernoulliBeam
-from continuum_robot.control.linear_quadratic_regulator import LinearQuadraticRegulator
+from control_design.linear_quadratic_regulator import LinearQuadraticRegulator
 from continuum_robot.control.full_state_linear import FullStateLinear
 
 
