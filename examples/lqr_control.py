@@ -1,17 +1,7 @@
 """
 LQR Control Example for Continuum Robot Beams with Kalman Filter Estimation.
-LQR Control Example for Continuum Robot Beams with Kalman Filter Estimation.
 
 This example demonstrates Linear Quadratic Regulator (LQR) control applied to
-continuum robot beams with and without state estimation using Kalman filtering.
-It compares four scenarios:
-1. Uncontrolled system
-2. LQR with full state feedback
-3. LQR with Kalman filter estimation (noisy measurements)
-4. LQR with perfect state feedback for comparison
-
-The Kalman filter estimates the full state from noisy tip position measurements
-with measurement noise standard deviation of 0.2 cm.
 continuum robot beams with and without state estimation using Kalman filtering.
 It compares four scenarios:
 1. Uncontrolled system
@@ -32,7 +22,6 @@ import time
 
 from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
 from continuum_robot.models.force_params import ForceParams
-from control_design.linear_quadratic_regulator import LinearQuadraticRegulator
 from control_design.linear_quadratic_regulator import LinearQuadraticRegulator
 from continuum_robot.control.full_state_linear import FullStateLinear
 from continuum_robot.estimator.kalman_filter import DiscreteKalman
@@ -241,11 +230,6 @@ def simulate_control_scenario(task):
             control_input = np.zeros(n_states)
         elif kalman_filter is None:
             # Perfect state feedback case
-        if controller is None:
-            # Uncontrolled case
-            control_input = np.zeros(n_states)
-        elif kalman_filter is None:
-            # Perfect state feedback case
             reference = np.zeros_like(x)
             control_input = controller.compute_input(x, reference, t)
         else:
@@ -300,28 +284,14 @@ def simulate_control_scenario(task):
 
     solution = solve_ivp(
         system_with_control_estimation,
-        system_with_control_estimation,
         t_span,
         x0,
         method="LSODA",
         t_eval=t_eval,
         rtol=1e-6,
         atol=1e-8,
-        rtol=1e-6,
-        atol=1e-8,
     )
 
-    computation_time = time.time() - start_time
-
-    # Extract solver statistics
-    solver_stats = {
-        "nfev": solution.nfev if hasattr(solution, "nfev") else 0,
-        "njev": solution.njev if hasattr(solution, "njev") else 0,
-        "nlu": solution.nlu if hasattr(solution, "nlu") else 0,
-    }
-
-    print(f"  - {case_name} completed: {solution.message}")
-    print(f"  - Computation time: {computation_time:.3f}s")
     computation_time = time.time() - start_time
 
     # Extract solver statistics
@@ -388,10 +358,8 @@ def create_multi_scenario_animation(solutions, estimate_logs):  # noqa: C901
                 all_y_values.extend(y_est.flatten())
 
     # Create animation with 2 subplots
-    # Create animation with 2 subplots
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 15))
 
-    # Setup animation plot
     # Setup animation plot
     ax1.set_xlim(0.0, 1.6)
 
@@ -410,7 +378,6 @@ def create_multi_scenario_animation(solutions, estimate_logs):  # noqa: C901
 
     ax1.set_xlabel("Beam Length (m)")
     ax1.set_ylabel("Displacement (m)")
-    ax1.set_title("Control and Estimation Scenarios Comparison")
     ax1.set_title("Control and Estimation Scenarios Comparison")
     ax1.grid(True)
 
@@ -527,9 +494,7 @@ def create_multi_scenario_animation(solutions, estimate_logs):  # noqa: C901
 
     # Create animation
     min_frames = min(len(coords[0]) for coords in scenario_data.values())
-    min_frames = min(len(coords[0]) for coords in scenario_data.values())
     anim = FuncAnimation(
-        fig, animate, frames=min_frames, interval=DT * 1000, blit=True, repeat=True
         fig, animate, frames=min_frames, interval=DT * 1000, blit=True, repeat=True
     )
 
@@ -553,73 +518,15 @@ def main(kalman_only=False):
     print(f"Running on {cpu_count()} CPU cores")
     print(f"System: {N_SEGMENTS} segments, {T_FINAL}s simulation")
     print("-" * 80)
-    print("-" * 80)
 
-    # Create beam parameter files
     # Create beam parameter files
     linear_file, _, _ = create_beam_parameters()
 
     try:
         # Create reference beam for controller design
-        # Create reference beam for controller design
         force_params = ForceParams(
             enable_gravity_effects=True, enable_fluid_effects=False
         )
-        reference_beam = DynamicEulerBernoulliBeam(linear_file, force_params)
-        reference_beam.create_system_func()
-        reference_beam.create_input_func()
-
-        # Design LQR controller and Kalman filter
-        print("\nDesigning control and estimation systems...")
-        controller, lqr_controller = design_lqr_controller(reference_beam)
-        kalman_filter = design_kalman_filter(reference_beam, lqr_controller)
-
-        # Define simulation scenarios
-        measurement_noise_std = 0.002  # 0.2cm
-        impulse_amplitude = 0.01
-
-        if kalman_only:
-            # Run only the Kalman filter case for troubleshooting
-            simulation_tasks = [
-                {
-                    "case_name": "LQR + Kalman Filter",
-                    "param_file": linear_file,
-                    "controller": controller,
-                    "kalman_filter": kalman_filter,
-                    "impulse_amplitude": impulse_amplitude,
-                    "measurement_noise_std": measurement_noise_std,
-                }
-            ]
-        else:
-            simulation_tasks = [
-                {
-                    "case_name": "Uncontrolled",
-                    "param_file": linear_file,
-                    "controller": None,
-                    "kalman_filter": None,
-                    "impulse_amplitude": impulse_amplitude,
-                    "measurement_noise_std": measurement_noise_std,
-                },
-                {
-                    "case_name": "LQR (Full State)",
-                    "param_file": linear_file,
-                    "controller": controller,
-                    "kalman_filter": None,
-                    "impulse_amplitude": impulse_amplitude,
-                    "measurement_noise_std": measurement_noise_std,
-                },
-                {
-                    "case_name": "LQR + Kalman Filter",
-                    "param_file": linear_file,
-                    "controller": controller,
-                    "kalman_filter": kalman_filter,
-                    "impulse_amplitude": impulse_amplitude,
-                    "measurement_noise_std": measurement_noise_std,
-                },
-            ]
-
-        print(f"\nStarting parallel simulation of {len(simulation_tasks)} scenarios...")
-        start_time = time.time()
         reference_beam = DynamicEulerBernoulliBeam(linear_file, force_params)
         reference_beam.create_system_func()
         reference_beam.create_input_func()
@@ -753,14 +660,9 @@ def main(kalman_only=False):
     except Exception as e:
         print(f"Error during simulation: {e}")
         import traceback
-    except Exception as e:
-        print(f"Error during simulation: {e}")
-        import traceback
 
         traceback.print_exc()
-        traceback.print_exc()
     finally:
-        # Cleanup
         # Cleanup
         cleanup_temp_files(linear_file)
 
