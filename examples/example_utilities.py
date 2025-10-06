@@ -17,7 +17,7 @@ from continuum_robot.models.dynamic_beam_model import DynamicEulerBernoulliBeam
 from continuum_robot.models.force_params import ForceParams
 
 # Simulation parameters
-T_FINAL = 0.1  # seconds (reduced for faster testing)
+T_FINAL = 0.1  # seconds
 DT = 0.001  # Time step for animation
 N_SEGMENTS = 6  # Number of beam segments
 
@@ -193,7 +193,7 @@ def extract_beam_shapes(
 
     for i in range(len(sol.t)):
         # For beams with 3 DOFs per node (u, w, phi)
-        pos = sol.y[n_pos + 1 :: 3, i]  # Extract w (transverse) displacements
+        pos = sol.y[1:n_pos:3, i]  # Extract w (transverse) displacements
 
         x[i, 0] = 0  # Fixed base
         y[i, 0] = 0
