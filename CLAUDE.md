@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Environment Setup
+
+Before running any code in this repository, activate the conda environment:
+```bash
+conda activate continuum_robot
+```
+
 ## Commands
 
 ### Testing
