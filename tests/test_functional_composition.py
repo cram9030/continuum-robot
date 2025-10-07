@@ -55,6 +55,10 @@ class MockForce(AbstractForce):
     def is_enabled(self) -> bool:
         return self.enabled
 
+    def get_name(self) -> str:
+        """Return the name identifier for this force component."""
+        return "MockForce"
+
 
 class MockInputHandler(AbstractInputHandler):
     """Mock input handler for testing purposes."""
@@ -548,3 +552,83 @@ class TestEdgeCasesAndErrors:
 
         assert sol.success
         assert sol.y.shape == (2 * n_dofs, len(t_eval))
+
+
+class TestForceIdentification:
+    """Test force identification via get_name() method."""
+
+    def test_gravity_force_name(self, beam_file):
+        """Test that GravityForce returns correct name."""
+        force_params = ForceParams(enable_gravity_effects=True)
+        beam = DynamicEulerBernoulliBeam(beam_file, force_params=force_params)
+
+        # Should have auto-registered gravity force
+        forces = beam.force_registry.get_registered_forces()
+        assert len(forces) == 1
+        assert isinstance(forces[0], GravityForce)
+        assert forces[0].get_name() == "GravityForce"
+
+    def test_fluid_drag_force_name(self, beam_file):
+        """Test that FluidDragForce returns correct name."""
+        force_params = ForceParams(fluid_density=1000.0, enable_fluid_effects=True)
+        beam = DynamicEulerBernoulliBeam(beam_file, force_params=force_params)
+
+        # Should have auto-registered fluid drag force
+        forces = beam.force_registry.get_registered_forces()
+        assert len(forces) == 1
+        assert isinstance(forces[0], FluidDragForce)
+        assert forces[0].get_name() == "FluidDragForce"
+
+    def test_mock_force_name(self, beam_file):
+        """Test that MockForce returns correct name."""
+        beam = DynamicEulerBernoulliBeam(beam_file)
+        mock_force = MockForce(beam)
+
+        beam.force_registry.register(mock_force)
+        forces = beam.force_registry.get_registered_forces()
+
+        assert len(forces) == 1
+        assert forces[0].get_name() == "MockForce"
+
+    def test_multiple_forces_identification(self, beam_file):
+        """Test identifying multiple registered forces by name."""
+        force_params = ForceParams(
+            fluid_density=1000.0, enable_fluid_effects=True, enable_gravity_effects=True
+        )
+        beam = DynamicEulerBernoulliBeam(beam_file, force_params=force_params)
+
+        # Should have auto-registered both forces
+        forces = beam.force_registry.get_registered_forces()
+        assert len(forces) == 2
+
+        # Get force names
+        force_names = [force.get_name() for force in forces]
+
+        # Both forces should be present
+        assert "GravityForce" in force_names
+        assert "FluidDragForce" in force_names
+
+        # Verify we can identify each force by name
+        for force in forces:
+            if force.get_name() == "GravityForce":
+                assert isinstance(force, GravityForce)
+            elif force.get_name() == "FluidDragForce":
+                assert isinstance(force, FluidDragForce)
+
+    def test_force_name_after_registration(self, beam_file):
+        """Test that force names are accessible after manual registration."""
+        beam = DynamicEulerBernoulliBeam(beam_file)
+
+        # Register multiple forces manually
+        mock_force1 = MockForce(beam, force_magnitude=100.0)
+        mock_force2 = MockForce(beam, force_magnitude=200.0)
+
+        beam.force_registry.register(mock_force1)
+        beam.force_registry.register(mock_force2)
+
+        forces = beam.force_registry.get_registered_forces()
+        assert len(forces) == 2
+
+        # Both should have the same name (MockForce)
+        for force in forces:
+            assert force.get_name() == "MockForce"

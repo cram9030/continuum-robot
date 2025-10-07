@@ -65,6 +65,10 @@ class StateAwareForce(AbstractForce):
     def is_enabled(self) -> bool:
         return self.enabled
 
+    def get_name(self) -> str:
+        """Return the name identifier for this force component."""
+        return "StateAwareForce"
+
 
 class TimeVaryingInputHandler(AbstractInputHandler):
     """Input handler that varies with time and state."""

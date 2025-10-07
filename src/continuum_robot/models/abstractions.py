@@ -172,6 +172,11 @@ class AbstractForce(ABC):
         """Return True if this force component is enabled."""
         pass
 
+    @abstractmethod
+    def get_name(self) -> str:
+        """Return the name identifier for this force component."""
+        pass
+
 
 def create_properties_from_dataframe(df: pd.DataFrame, segment_id: int) -> Properties:
     """

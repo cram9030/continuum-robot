@@ -47,6 +47,10 @@ class FluidDragForce(AbstractForce):
         """Return True if fluid effects are enabled."""
         return self.enabled
 
+    def get_name(self) -> str:
+        """Return the name identifier for this force component."""
+        return "FluidDragForce"
+
     def _precompute_fluid_coefficients(self) -> None:
         """Precompute fluid dynamics coefficients using state mapping."""
         if not self.is_enabled():

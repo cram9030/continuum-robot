@@ -151,6 +151,10 @@ class GravityForce(AbstractForce):
         """Return True if this force component is enabled."""
         return self.enabled
 
+    def get_name(self) -> str:
+        """Return the name identifier for this force component."""
+        return "GravityForce"
+
     def set_enabled(self, enabled: bool) -> None:
         """Enable or disable this force component."""
         self.enabled = enabled

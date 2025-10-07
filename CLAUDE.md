@@ -4,10 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Environment Setup
 
-Before running any code in this repository, activate the conda environment:
+Before running any code in this repository, activate the conda environment.
+
+**Standard activation (if conda is in PATH):**
 ```bash
 conda activate continuum_robot
 ```
+
+**If conda is not in PATH, use one of these methods:**
+
+1. **Source conda directly from miniconda3:**
+```bash
+eval "$(~/miniconda3/bin/conda shell.bash hook)" && conda activate continuum_robot
+```
+
+2. **Source from bashrc and activate:**
+```bash
+source ~/.bashrc && conda activate continuum_robot
+```
+
+3. **Find and source conda initialization:**
+```bash
+source $(conda info --base)/etc/profile.d/conda.sh && conda activate continuum_robot
+```
+
+**Note:** When using Bash tool in Claude Code, conda may not be available in PATH. In that case, use method 1 (eval with miniconda3 path) for most reliable results.
 
 ## Commands
 
