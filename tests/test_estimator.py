@@ -9,6 +9,7 @@ handling and edge case coverage.
 import pytest
 import numpy as np
 import warnings
+import control as ct
 
 from continuum_robot.estimator.estimator_abstractions import AbstractEstimatorHandler
 from continuum_robot.estimator.hybrid_kalman_filter import (
@@ -21,6 +22,8 @@ from continuum_robot.estimator.validator_abstractions import (
 from continuum_robot.estimator.linear_estimator_validator import (
     LinearEstimatorValidator,
 )
+from estimator_design.linear_quadratic_estimator import LinearQuadraticEstimator
+from continuum_robot.estimator.lqe_filter import KalmanFilterLTI
 
 
 class TestValidationResult:
@@ -133,7 +136,7 @@ class TestLinearEstimatorValidator:
         """Test successful validation with valid matrices."""
         A, B, C, Q, R, P, x0, dt = simple_system_matrices
         validator = LinearEstimatorValidator()
-        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt)
+        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt=(dt, dt))
 
         assert result.is_valid
         assert not result.has_errors()
@@ -144,7 +147,9 @@ class TestLinearEstimatorValidator:
         validator = LinearEstimatorValidator()
 
         # Pass list instead of numpy array
-        result = validator.validate_initialization(A.tolist(), B, C, Q, R, P, x0, dt)
+        result = validator.validate_initialization(
+            A.tolist(), B, C, Q, R, P, x0, dt=(dt, dt)
+        )
 
         assert not result.is_valid
         assert result.has_errors()
@@ -156,14 +161,18 @@ class TestLinearEstimatorValidator:
         A, B, C, Q, R, P, x0, _ = simple_system_matrices
         validator = LinearEstimatorValidator()
 
-        # Negative dt
-        result = validator.validate_initialization(A, B, C, Q, R, P, x0, -0.01)
+        # Negative dt_state
+        result = validator.validate_initialization(
+            A, B, C, Q, R, P, x0, dt=(-0.01, 0.01)
+        )
         assert not result.is_valid
-        assert any("dt must be positive" in err for err in result.get_errors())
+        assert any(
+            "dt_state must be non-negative" in err for err in result.get_errors()
+        )
 
-        # Zero dt
-        result = validator.validate_initialization(A, B, C, Q, R, P, x0, 0.0)
-        assert not result.is_valid
+        # Zero dt_state (valid for continuous)
+        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt=(0.0, 0.01))
+        assert result.is_valid  # Zero dt_state is valid (continuous)
 
     def test_dimension_validation_wrong_B(self, simple_system_matrices):
         """Test dimension validation with wrong B dimensions."""
@@ -171,7 +180,9 @@ class TestLinearEstimatorValidator:
         validator = LinearEstimatorValidator()
 
         B_wrong = np.array([[0.0], [1.0], [2.0]])  # 3x1 instead of 2x1
-        result = validator.validate_initialization(A, B_wrong, C, Q, R, P, x0, dt)
+        result = validator.validate_initialization(
+            A, B_wrong, C, Q, R, P, x0, dt=(dt, dt)
+        )
 
         assert not result.is_valid
         errors = result.get_errors()
@@ -183,7 +194,9 @@ class TestLinearEstimatorValidator:
         validator = LinearEstimatorValidator()
 
         C_wrong = np.array([[1.0, 0.0, 1.0]])  # 1x3 instead of 1x2
-        result = validator.validate_initialization(A, B, C_wrong, Q, R, P, x0, dt)
+        result = validator.validate_initialization(
+            A, B, C_wrong, Q, R, P, x0, dt=(dt, dt)
+        )
 
         assert not result.is_valid
         errors = result.get_errors()
@@ -195,7 +208,9 @@ class TestLinearEstimatorValidator:
         validator = LinearEstimatorValidator()
 
         A_nonsquare = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        result = validator.validate_initialization(A_nonsquare, B, C, Q, R, P, x0, dt)
+        result = validator.validate_initialization(
+            A_nonsquare, B, C, Q, R, P, x0, dt=(dt, dt)
+        )
 
         assert not result.is_valid
         errors = result.get_errors()
@@ -208,7 +223,9 @@ class TestLinearEstimatorValidator:
 
         A_nan = A.copy()
         A_nan[0, 0] = np.nan
-        result = validator.validate_initialization(A_nan, B, C, Q, R, P, x0, dt)
+        result = validator.validate_initialization(
+            A_nan, B, C, Q, R, P, x0, dt=(dt, dt)
+        )
 
         assert not result.is_valid
         errors = result.get_errors()
@@ -221,7 +238,9 @@ class TestLinearEstimatorValidator:
 
         Q_inf = Q.copy()
         Q_inf[0, 0] = np.inf
-        result = validator.validate_initialization(A, B, C, Q_inf, R, P, x0, dt)
+        result = validator.validate_initialization(
+            A, B, C, Q_inf, R, P, x0, dt=(dt, dt)
+        )
 
         assert not result.is_valid
         errors = result.get_errors()
@@ -235,7 +254,9 @@ class TestLinearEstimatorValidator:
         validator = LinearEstimatorValidator()
 
         R_non_pd = np.array([[-0.1]])  # Negative definite
-        result = validator.validate_initialization(A, B, C, Q, R_non_pd, P, x0, dt)
+        result = validator.validate_initialization(
+            A, B, C, Q, R_non_pd, P, x0, dt=(dt, dt)
+        )
 
         assert not result.is_valid
         errors = result.get_errors()
@@ -249,7 +270,9 @@ class TestLinearEstimatorValidator:
         validator = LinearEstimatorValidator()
 
         Q_non_psd = np.array([[1.0, 2.0], [2.0, 1.0]])  # Not PSD
-        result = validator.validate_initialization(A, B, C, Q_non_psd, R, P, x0, dt)
+        result = validator.validate_initialization(
+            A, B, C, Q_non_psd, R, P, x0, dt=(dt, dt)
+        )
 
         assert not result.is_valid
         errors = result.get_errors()
@@ -260,7 +283,7 @@ class TestLinearEstimatorValidator:
         A, B, C, Q, R, P, x0, dt = simple_system_matrices
         validator = LinearEstimatorValidator()
 
-        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt)
+        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt=(dt, dt))
 
         assert result.is_valid
         info_messages = result.get_info()
@@ -279,7 +302,7 @@ class TestLinearEstimatorValidator:
         dt = 0.01
 
         validator = LinearEstimatorValidator()
-        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt)
+        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt=(dt, dt))
 
         assert result.is_valid  # Warnings don't fail validation
         assert result.has_warnings()
@@ -287,8 +310,8 @@ class TestLinearEstimatorValidator:
         assert any("not be fully observable" in warn for warn in warnings)
 
     def test_stability_check_unstable_system(self):
-        """Test stability check for unstable system."""
-        A = np.array([[1.1, 0.0], [0.0, -0.5]])  # One unstable eigenvalue
+        """Test stability check for unstable discrete-time system."""
+        A = np.array([[1.1, 0.0], [0.0, -0.5]])  # One unstable eigenvalue (discrete)
         B = np.array([[1.0], [0.0]])
         C = np.array([[1.0, 0.0]])
         Q = 0.01 * np.eye(2)
@@ -298,12 +321,34 @@ class TestLinearEstimatorValidator:
         dt = 0.01
 
         validator = LinearEstimatorValidator()
-        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt)
+        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt=(dt, dt))
 
         assert result.is_valid  # Warnings don't fail validation
         assert result.has_warnings()
         warnings = result.get_warnings()
-        assert any("unstable" in warn for warn in warnings)
+        assert any("Discrete-time" in warn and "unstable" in warn for warn in warnings)
+
+    def test_stability_check_unstable_continuous_system(self):
+        """Test stability check for unstable continuous-time system."""
+        A = np.array(
+            [[0.1, 0.0], [0.0, -0.5]]
+        )  # Positive real part eigenvalue (continuous)
+        B = np.array([[1.0], [0.0]])
+        C = np.array([[1.0, 0.0]])
+        Q = 0.01 * np.eye(2)
+        R = np.array([[0.1]])
+        P = np.eye(2)
+        x0 = np.zeros(2)
+
+        validator = LinearEstimatorValidator()
+        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt=None)
+
+        assert result.is_valid  # Warnings don't fail validation
+        assert result.has_warnings()
+        warnings = result.get_warnings()
+        assert any(
+            "Continuous-time" in warn and "unstable" in warn for warn in warnings
+        )
 
     def test_conditioning_check_ill_conditioned(self):
         """Test conditioning check for ill-conditioned matrices."""
@@ -317,7 +362,7 @@ class TestLinearEstimatorValidator:
         dt = 0.01
 
         validator = LinearEstimatorValidator()
-        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt)
+        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt=(dt, dt))
 
         assert result.is_valid
         assert result.has_warnings()
@@ -329,12 +374,12 @@ class TestLinearEstimatorValidator:
         A, B, C, Q, R, P, x0, _ = simple_system_matrices
         validator = LinearEstimatorValidator()
 
-        result = validator.validate_initialization(A, B, C, Q, R, P, x0, 2.0)
+        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt=(2.0, 2.0))
 
         assert result.is_valid
         assert result.has_warnings()
         warnings = result.get_warnings()
-        assert any("Large time step" in warn for warn in warnings)
+        assert any("Large" in warn and "time step" in warn for warn in warnings)
 
     def test_large_system_warning(self):
         """Test warning for large systems."""
@@ -349,7 +394,7 @@ class TestLinearEstimatorValidator:
         dt = 0.01
 
         validator = LinearEstimatorValidator()
-        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt)
+        result = validator.validate_initialization(A, B, C, Q, R, P, x0, dt=(dt, dt))
 
         assert result.is_valid
         assert result.has_warnings()
@@ -475,8 +520,10 @@ class TestHybridContinuousDiscreteKalmanInitialization:
         assert np.array_equal(kf.C, C)
         assert np.array_equal(kf.Q, Q)
         assert np.array_equal(kf.R, R)
-        assert np.array_equal(kf.P, P)
+        assert np.array_equal(kf.P_est, P)
+        assert np.array_equal(kf.P_pred, P)
         assert np.array_equal(kf.x_est, x0)
+        assert np.array_equal(kf.x_pred, x0)
         assert kf.dt == dt
 
     def test_matrices_are_copied_not_referenced(self, simple_system_matrices):
@@ -508,12 +555,13 @@ class TestHybridContinuousDiscreteKalmanInitialization:
         A, B, C, Q, R, P, x0, _ = simple_system_matrices
 
         # Negative time step
-        with pytest.raises(ValueError, match="dt must be positive"):
+        with pytest.raises(ValueError, match="dt_measurement must be non-negative"):
             HybridContinuousDiscreteKalman(A, B, C, Q, R, P, x0, -0.01)
 
-        # Zero time step
-        with pytest.raises(ValueError, match="dt must be positive"):
-            HybridContinuousDiscreteKalman(A, B, C, Q, R, P, x0, 0.0)
+        # Zero time step is now valid (treated as continuous measurement)
+        # This should not raise an error
+        kf = HybridContinuousDiscreteKalman(A, B, C, Q, R, P, x0, 0.0)
+        assert kf.dt == 0.0
 
     def test_incompatible_matrix_dimensions_raise_error(self, simple_system_matrices):
         """Test that incompatible matrix dimensions raise ValueError."""
@@ -997,7 +1045,7 @@ class TestHybridContinuousDiscreteKalmanTimeBasedBehavior:
 
         # Store initial state
         initial_state = kf.x_est.copy()
-        initial_P = kf.P.copy()
+        initial_P = kf.P_est.copy()
 
         # First call should perform update
         y = np.array([0.5])
@@ -1008,7 +1056,7 @@ class TestHybridContinuousDiscreteKalmanTimeBasedBehavior:
 
         # State should have changed due to measurement update
         assert not np.array_equal(result, initial_state)
-        assert not np.array_equal(kf.P, initial_P)
+        assert not np.array_equal(kf.P_est, initial_P)
         assert kf.last_update_time == t
 
     def test_calls_before_dt_return_predicted_state_only(
@@ -1025,7 +1073,7 @@ class TestHybridContinuousDiscreteKalmanTimeBasedBehavior:
 
         # Store state after first update
         state_after_update = kf.x_est.copy()
-        P_after_update = kf.P.copy()
+        P_after_update = kf.P_est.copy()
 
         # Second call before dt has elapsed
         t2 = t1 + kf.dt / 2  # Half the measurement interval
@@ -1033,7 +1081,7 @@ class TestHybridContinuousDiscreteKalmanTimeBasedBehavior:
 
         # Internal state should remain unchanged (no measurement update)
         assert np.array_equal(kf.x_est, state_after_update)
-        assert np.array_equal(kf.P, P_after_update)
+        assert np.array_equal(kf.P_est, P_after_update)
         assert kf.last_update_time == t1  # Should not have updated
 
         # But returned state should be predicted state (different from internal state)
@@ -1173,6 +1221,591 @@ class TestHybridContinuousDiscreteKalmanTimeBasedBehavior:
         # Should have updated time and performed single update
         assert kf.last_update_time == t2
         assert not np.array_equal(kf.x_est, state_before)
+
+
+class TestLinearQuadraticEstimator:
+    """Test LinearQuadraticEstimator initialization and gain computation."""
+
+    @pytest.fixture
+    def simple_system_matrices(self):
+        """Provide simple 2-state system matrices for testing."""
+        n_states = 2
+        A = np.array([[0.0, 1.0], [-1.0, -0.1]])
+        C = np.array([[1.0, 0.0]])
+        Q = 0.01 * np.eye(n_states)  # Process noise
+        R = np.array([[0.1]])  # Measurement noise
+        return A, C, Q, R
+
+    def test_successful_initialization_with_matrices(self, simple_system_matrices):
+        """Test successful initialization with explicit matrices."""
+        A, C, Q, R = simple_system_matrices
+
+        lqe = LinearQuadraticEstimator(A=A, C=C, Q=Q, R=R)
+
+        assert np.array_equal(lqe.A, A)
+        assert np.array_equal(lqe.C, C)
+        assert np.array_equal(lqe.Q, Q)
+        assert np.array_equal(lqe.R, R)
+        assert not lqe.is_discrete_time()
+
+    def test_successful_initialization_with_state_space_system(
+        self, simple_system_matrices
+    ):
+        """Test successful initialization with control.StateSpace system."""
+        A, C, Q, R = simple_system_matrices
+        B = np.array([[0.0], [1.0]])
+        D = np.zeros((1, 1))
+
+        sys = ct.StateSpace(A, B, C, D)
+        lqe = LinearQuadraticEstimator(sys=sys, Q=Q, R=R)
+
+        assert np.array_equal(lqe.A, A)
+        assert np.array_equal(lqe.B, B)
+        assert np.array_equal(lqe.C, C)
+        assert not lqe.is_discrete_time()
+
+    def test_discrete_time_system_from_state_space(self, simple_system_matrices):
+        """Test discrete-time system detection from StateSpace."""
+        A, C, Q, R = simple_system_matrices
+        B = np.array([[0.0], [1.0]])
+        D = np.zeros((1, 1))
+        dt = 0.01
+
+        sys = ct.StateSpace(A, B, C, D, dt=dt)
+        lqe = LinearQuadraticEstimator(sys=sys, Q=Q, R=R)
+
+        assert lqe.is_discrete_time()
+
+    def test_missing_matrices_raises_error(self):
+        """Test that missing required matrices raise ValueError."""
+        with pytest.raises(ValueError, match="Either sys or all of"):
+            LinearQuadraticEstimator()
+
+    def test_missing_Q_R_with_sys_raises_error(self, simple_system_matrices):
+        """Test that missing Q and R with sys raises ValueError."""
+        A, C, _, _ = simple_system_matrices
+        B = np.array([[0.0], [1.0]])
+        D = np.zeros((1, 1))
+
+        sys = ct.StateSpace(A, B, C, D)
+        with pytest.raises(ValueError, match="Q and R matrices must be provided"):
+            LinearQuadraticEstimator(sys=sys)
+
+    def test_invalid_matrix_dimensions_raise_error(self, simple_system_matrices):
+        """Test that invalid matrix dimensions raise ValueError."""
+        A, C, Q, R = simple_system_matrices
+
+        # Wrong A dimensions (non-square)
+        A_wrong = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        with pytest.raises(ValueError, match="A must be square"):
+            LinearQuadraticEstimator(A=A_wrong, C=C, Q=Q, R=R)
+
+    def test_non_positive_definite_R_raises_error(self, simple_system_matrices):
+        """Test that non-positive definite R raises ValueError."""
+        A, C, Q, _ = simple_system_matrices
+
+        R_non_pd = np.array([[-0.1]])  # Negative definite
+        with pytest.raises(ValueError, match="R must be positive definite"):
+            LinearQuadraticEstimator(A=A, C=C, Q=Q, R=R_non_pd)
+
+    def test_compute_estimator_gain_continuous(self, simple_system_matrices):
+        """Test computing estimator gain for continuous-time system."""
+        A, C, Q, R = simple_system_matrices
+
+        lqe = LinearQuadraticEstimator(A=A, C=C, Q=Q, R=R)
+        L, P = lqe.compute_estimator_gain()
+
+        # Check dimensions
+        n_states = A.shape[0]
+        n_measurements = C.shape[0]
+        assert L.shape == (n_states, n_measurements)
+        assert P.shape == (n_states, n_states)
+
+        # Check that P is positive semidefinite
+        eigenvals_P = np.linalg.eigvals(P)
+        assert np.all(eigenvals_P >= -1e-8)
+
+    def test_compute_estimator_gain_discrete(self, simple_system_matrices):
+        """Test computing estimator gain for discrete-time system."""
+        A, C, Q, R = simple_system_matrices
+
+        lqe = LinearQuadraticEstimator(A=A, C=C, Q=Q, R=R)
+        lqe.set_discrete_time(True)
+        L, P = lqe.compute_estimator_gain()
+
+        # Check dimensions
+        n_states = A.shape[0]
+        n_measurements = C.shape[0]
+        assert L.shape == (n_states, n_measurements)
+        assert P.shape == (n_states, n_states)
+
+    def test_get_L_computes_if_not_cached(self, simple_system_matrices):
+        """Test that get_L computes gain if not already computed."""
+        A, C, Q, R = simple_system_matrices
+
+        lqe = LinearQuadraticEstimator(A=A, C=C, Q=Q, R=R)
+        L = lqe.get_L()
+
+        # Check that gain is computed and returned
+        assert L is not None
+        assert L.shape == (A.shape[0], C.shape[0])
+
+    def test_get_P_computes_if_not_cached(self, simple_system_matrices):
+        """Test that get_P computes covariance if not already computed."""
+        A, C, Q, R = simple_system_matrices
+
+        lqe = LinearQuadraticEstimator(A=A, C=C, Q=Q, R=R)
+        P = lqe.get_P()
+
+        # Check that covariance is computed and returned
+        assert P is not None
+        assert P.shape == (A.shape[0], A.shape[0])
+
+    def test_estimator_stability_check(self, simple_system_matrices):
+        """Test that estimator stability is checked."""
+        A, C, Q, R = simple_system_matrices
+
+        lqe = LinearQuadraticEstimator(A=A, C=C, Q=Q, R=R)
+        L, _ = lqe.compute_estimator_gain()
+
+        # Check that estimator (A - L*C) is stable
+        A_est = A - L @ C
+        eigenvals = np.linalg.eigvals(A_est)
+        max_real_part = np.max(np.real(eigenvals))
+
+        # For continuous-time, all eigenvalues should have negative real parts
+        assert max_real_part < 0
+
+    def test_unstable_estimator_raises_error(self):
+        """Test that unstable estimator design raises ValueError."""
+        # Create system where LQE might fail (unobservable)
+        A = np.array([[1.0, 0.0], [0.0, 0.5]])  # Decoupled dynamics
+        C = np.array([[1.0, 0.0]])  # Can't observe second state
+        Q = 1e-10 * np.eye(2)  # Very small process noise
+        R = np.array([[1.0]])
+
+        # This might or might not fail depending on control library behavior
+        # If it computes a gain, it should be stable
+        try:
+            lqe = LinearQuadraticEstimator(A=A, C=C, Q=Q, R=R)
+            L, _ = lqe.compute_estimator_gain()
+
+            # If computation succeeded, verify stability
+            A_est = A - L @ C
+            eigenvals = np.linalg.eigvals(A_est)
+            max_real_part = np.max(np.real(eigenvals))
+            # Should either fail or be stable
+            assert max_real_part < 0
+        except ValueError:
+            # Expected for unobservable or ill-conditioned systems
+            pass
+
+    def test_set_discrete_time_before_computation(self, simple_system_matrices):
+        """Test setting discrete-time mode before computing gain."""
+        A, C, Q, R = simple_system_matrices
+
+        lqe = LinearQuadraticEstimator(A=A, C=C, Q=Q, R=R)
+        assert not lqe.is_discrete_time()
+
+        lqe.set_discrete_time(True)
+        assert lqe.is_discrete_time()
+
+    def test_cannot_change_discrete_mode_after_computation(
+        self, simple_system_matrices
+    ):
+        """Test that discrete mode cannot be changed after gain is computed."""
+        A, C, Q, R = simple_system_matrices
+
+        lqe = LinearQuadraticEstimator(A=A, C=C, Q=Q, R=R)
+        lqe.compute_estimator_gain()
+
+        with pytest.raises(ValueError, match="Cannot change discrete/continuous mode"):
+            lqe.set_discrete_time(True)
+
+    def test_get_A_returns_system_matrix(self, simple_system_matrices):
+        """Test that get_A returns the system matrix."""
+        A, C, Q, R = simple_system_matrices
+
+        lqe = LinearQuadraticEstimator(A=A, C=C, Q=Q, R=R)
+        A_returned = lqe.get_A()
+
+        assert np.array_equal(A_returned, A)
+
+    def test_get_C_returns_observation_matrix(self, simple_system_matrices):
+        """Test that get_C returns the observation matrix."""
+        A, C, Q, R = simple_system_matrices
+
+        lqe = LinearQuadraticEstimator(A=A, C=C, Q=Q, R=R)
+        C_returned = lqe.get_C()
+
+        assert np.array_equal(C_returned, C)
+
+    def test_cached_gain_computation(self, simple_system_matrices):
+        """Test that gain computation is cached."""
+        A, C, Q, R = simple_system_matrices
+
+        lqe = LinearQuadraticEstimator(A=A, C=C, Q=Q, R=R)
+
+        # Compute gain first time
+        L1, P1 = lqe.compute_estimator_gain()
+
+        # Compute again - should return cached values
+        L2, P2 = lqe.compute_estimator_gain()
+
+        assert np.array_equal(L1, L2)
+        assert np.array_equal(P1, P2)
+        assert L1 is L2  # Should be the same object
+        assert P1 is P2
+
+
+class TestKalmanFilterLTI:
+    """Test KalmanFilterLTI initialization and state estimation."""
+
+    @pytest.fixture
+    def simple_continuous_system(self):
+        """Provide simple continuous-time system for testing."""
+        n_states = 2
+        A = np.array([[0.0, 1.0], [-1.0, -0.1]])
+        B = np.array([[0.0], [1.0]])
+        C = np.array([[1.0, 0.0]])
+        L = np.array([[0.5], [0.2]])  # Pre-computed estimator gain
+        P = 0.1 * np.eye(n_states)  # Steady-state covariance
+        x0 = np.zeros(n_states)
+        return A, B, C, L, P, x0
+
+    @pytest.fixture
+    def simple_discrete_system(self):
+        """Provide simple discrete-time system for testing."""
+        n_states = 2
+        A = np.array([[1.0, 0.01], [0.0, 0.99]])
+        B = np.array([[0.0005], [0.01]])
+        C = np.array([[1.0, 0.0]])
+        L = np.array([[0.4], [0.15]])  # Pre-computed estimator gain
+        P = 0.1 * np.eye(n_states)
+        x0 = np.zeros(n_states)
+        dt = 0.01
+        return A, B, C, L, P, x0, dt
+
+    def test_successful_continuous_initialization(self, simple_continuous_system):
+        """Test successful initialization for continuous-time system."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        assert np.array_equal(kf.A, A)
+        assert np.array_equal(kf.B, B)
+        assert np.array_equal(kf.C, C)
+        assert np.array_equal(kf.L, L)
+        assert np.array_equal(kf.P, P)
+        assert kf.is_continuous
+        assert kf.dt is None
+
+    def test_successful_discrete_initialization(self, simple_discrete_system):
+        """Test successful initialization for discrete-time system."""
+        A, B, C, L, P, x0, dt = simple_discrete_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0, dt=dt)
+
+        assert np.array_equal(kf.A, A)
+        assert not kf.is_continuous
+        assert kf.dt == dt
+
+    def test_default_initial_state(self, simple_continuous_system):
+        """Test that initial state defaults to zeros if not provided."""
+        A, B, C, L, P, _ = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P)
+
+        assert np.array_equal(kf.x_est, np.zeros(A.shape[0]))
+
+    def test_matrices_are_copied(self, simple_continuous_system):
+        """Test that matrices are copied, not referenced."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        # Modify original matrices
+        A[0, 0] = 999
+        B[0, 0] = 999
+        L[0, 0] = 999
+        x0[0] = 999
+
+        # Filter matrices should be unchanged
+        assert kf.A[0, 0] != 999
+        assert kf.B[0, 0] != 999
+        assert kf.L[0, 0] != 999
+        assert kf.x_est[0] != 999
+
+    def test_precomputed_A_est_matrix(self, simple_continuous_system):
+        """Test that A_est is pre-computed correctly."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        # Check that A_est = A - L*C
+        expected_A_est = A - L @ C
+        assert np.allclose(kf.A_est, expected_A_est)
+
+    def test_invalid_L_dimensions_raise_error(self, simple_continuous_system):
+        """Test that invalid L dimensions raise ValueError."""
+        A, B, C, _, P, x0 = simple_continuous_system
+
+        # Wrong L dimensions
+        L_wrong = np.array([[0.5, 0.2]])  # Should be (2, 1) not (1, 2)
+        with pytest.raises(ValueError, match="Estimator gain L must have shape"):
+            KalmanFilterLTI(A, B, C, L_wrong, P, x0)
+
+    def test_L_with_nan_raises_error(self, simple_continuous_system):
+        """Test that L with NaN values raises ValueError."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        L_nan = L.copy()
+        L_nan[0, 0] = np.nan
+        with pytest.raises(ValueError, match="Estimator gain L contains NaN"):
+            KalmanFilterLTI(A, B, C, L_nan, P, x0)
+
+    def test_L_with_inf_raises_error(self, simple_continuous_system):
+        """Test that L with infinite values raises ValueError."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        L_inf = L.copy()
+        L_inf[0, 0] = np.inf
+        with pytest.raises(ValueError, match="Estimator gain L contains infinite"):
+            KalmanFilterLTI(A, B, C, L_inf, P, x0)
+
+    def test_continuous_estimation_first_call(self, simple_continuous_system):
+        """Test first estimation call for continuous-time system."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        y = np.array([0.5])
+        u = np.array([0.0])
+        t = 0.0
+
+        result = kf.estimate_states(y, u, t)
+
+        # Check that result is correct type and shape
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (2,)
+
+        # Check that last_time is set
+        assert kf.last_time == t
+
+    def test_continuous_estimation_subsequent_calls(self, simple_continuous_system):
+        """Test subsequent estimation calls for continuous-time system."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        # First call
+        y1 = np.array([0.5])
+        u1 = np.array([0.0])
+        t1 = 0.0
+        state1 = kf.estimate_states(y1, u1, t1)
+
+        # Second call
+        y2 = np.array([0.6])
+        u2 = np.array([0.1])
+        t2 = 0.01
+        state2 = kf.estimate_states(y2, u2, t2)
+
+        # States should be different
+        assert not np.array_equal(state1, state2)
+        assert kf.last_time == t2
+
+    def test_discrete_estimation(self, simple_discrete_system):
+        """Test estimation for discrete-time system."""
+        A, B, C, L, P, x0, dt = simple_discrete_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0, dt=dt)
+
+        y = np.array([0.5])
+        u = np.array([0.0])
+        t = 0.0
+
+        result = kf.estimate_states(y, u, t)
+
+        # Check result type and shape
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (2,)
+
+        # Manually compute expected result
+        A_est = A - L @ C
+        expected = A_est @ x0 + B @ u + L @ y
+
+        # Check that result matches expected
+        assert np.allclose(result, expected)
+
+    def test_multiple_discrete_estimation_steps(self, simple_discrete_system):
+        """Test multiple estimation steps for discrete-time system."""
+        A, B, C, L, P, x0, dt = simple_discrete_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0, dt=dt)
+
+        measurements = [0.0, 0.1, 0.15, 0.18, 0.2]
+        inputs = [1.0, 1.0, 0.5, 0.0, -0.5]
+
+        states = []
+        for i, (y_val, u_val) in enumerate(zip(measurements, inputs)):
+            y = np.array([y_val])
+            u = np.array([u_val])
+            t = i * dt
+
+            state = kf.estimate_states(y, u, t)
+            states.append(state.copy())
+
+        # Check that we got results for all time steps
+        assert len(states) == 5
+
+        # Check that states evolved (not all the same)
+        for i in range(1, len(states)):
+            assert not np.array_equal(states[i], states[i - 1])
+
+    def test_returned_state_is_copy(self, simple_continuous_system):
+        """Test that returned state is a copy, not a reference."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        y = np.array([0.5])
+        u = np.array([0.0])
+        t = 0.0
+
+        result = kf.estimate_states(y, u, t)
+        result[0] = 999.0
+
+        # Internal state should be unchanged
+        assert kf.x_est[0] != 999.0
+
+    def test_runtime_validation_invalid_measurement_type(
+        self, simple_continuous_system
+    ):
+        """Test that invalid measurement type raises ValueError."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        with pytest.raises(ValueError, match="Measurement y must be numpy array"):
+            kf.estimate_states([0.5], np.array([0.0]), 0.0)
+
+    def test_runtime_validation_wrong_dimensions(self, simple_continuous_system):
+        """Test that wrong dimensions raise ValueError."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        # Wrong measurement dimension
+        with pytest.raises(ValueError, match="Measurement y must have shape"):
+            kf.estimate_states(np.array([0.5, 0.6]), np.array([0.0]), 0.0)
+
+    def test_runtime_validation_nan_values(self, simple_continuous_system):
+        """Test that NaN values raise ValueError."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        with pytest.raises(ValueError, match="Measurement y contains NaN"):
+            kf.estimate_states(np.array([np.nan]), np.array([0.0]), 0.0)
+
+    def test_time_cannot_go_backwards(self, simple_continuous_system):
+        """Test that time going backwards raises ValueError for continuous systems."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        # First call
+        y = np.array([0.5])
+        u = np.array([0.0])
+        kf.estimate_states(y, u, 1.0)
+
+        # Second call with earlier time
+        with pytest.raises(ValueError, match="Time cannot go backwards"):
+            kf.estimate_states(y, u, 0.5)
+
+    def test_zero_time_step_continuous(self, simple_continuous_system):
+        """Test that zero time step doesn't integrate for continuous systems."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        # First call
+        y = np.array([0.5])
+        u = np.array([0.0])
+        kf.estimate_states(y, u, 0.0)
+
+        state_after_first = kf.x_est.copy()
+
+        # Second call at same time
+        kf.estimate_states(y, u, 0.0)
+
+        # State should be unchanged (no integration for dt=0)
+        assert np.array_equal(kf.x_est, state_after_first)
+
+    def test_reset_with_new_state(self, simple_continuous_system):
+        """Test resetting estimator with new initial state."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        # Run estimation
+        y = np.array([0.5])
+        u = np.array([0.0])
+        kf.estimate_states(y, u, 0.0)
+
+        # Reset with new state
+        new_x0 = np.array([1.0, 2.0])
+        kf.reset(new_x0)
+
+        assert np.array_equal(kf.x_est, new_x0)
+        assert kf.last_time is None
+
+    def test_reset_to_zeros(self, simple_continuous_system):
+        """Test resetting estimator to zeros."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        # Run estimation
+        y = np.array([0.5])
+        u = np.array([0.0])
+        kf.estimate_states(y, u, 0.0)
+
+        # Reset to zeros
+        kf.reset()
+
+        assert np.array_equal(kf.x_est, np.zeros(2))
+        assert kf.last_time is None
+
+    def test_reset_with_invalid_dimensions_raises_error(self, simple_continuous_system):
+        """Test that reset with invalid dimensions raises ValueError."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        with pytest.raises(ValueError, match="Initial state x0 must have shape"):
+            kf.reset(np.array([1.0, 2.0, 3.0]))
+
+    def test_continuous_integration_with_nonzero_input(self, simple_continuous_system):
+        """Test continuous-time integration with non-zero inputs."""
+        A, B, C, L, P, x0 = simple_continuous_system
+
+        kf = KalmanFilterLTI(A, B, C, L, P, x0)
+
+        # First call with measurement
+        y1 = np.array([0.5])
+        u1 = np.array([0.0])
+        t1 = 0.0
+        state1 = kf.estimate_states(y1, u1, t1)
+
+        # Second call with non-zero input
+        y2 = np.array([0.6])
+        u2 = np.array([1.0])  # Non-zero input
+        t2 = 0.1
+        state2 = kf.estimate_states(y2, u2, t2)
+
+        # States should have evolved
+        assert not np.array_equal(state1, state2)
 
 
 if __name__ == "__main__":

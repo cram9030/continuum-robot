@@ -28,7 +28,7 @@ class LinearEstimatorValidator(IEstimatorValidator):
         R: np.ndarray,
         P: np.ndarray,
         x0: np.ndarray,
-        dt: float,
+        dt: tuple = None,
     ) -> ValidationResult:
         """
         Validate initialization parameters for a linear Kalman filter.
@@ -41,7 +41,13 @@ class LinearEstimatorValidator(IEstimatorValidator):
             R: Measurement noise covariance (n_measurements x n_measurements)
             P: Initial estimate error covariance (n_states x n_states)
             x0: Initial state estimate (n_states,)
-            dt: Time step (must be positive)
+            dt: Time step as tuple (dt_state, dt_measurement) where:
+                - dt_state: State equation sampling (None/0 for continuous,
+                  >0 for discrete)
+                - dt_measurement: Measurement equation sampling (None/0 for
+                  continuous, >0 for discrete)
+                If None, assumes continuous-time system (equivalent to
+                (None, None))
 
         Returns:
             ValidationResult with validation status and messages
@@ -74,7 +80,7 @@ class LinearEstimatorValidator(IEstimatorValidator):
 
         # System-specific properties (warnings only)
         self._check_observability(result, A, C)
-        self._check_stability(result, A)
+        self._check_stability(result, A, dt)
         self._check_conditioning(result, A, P)
         self._check_time_step(result, dt)
         self._check_system_size(result, n_states)
@@ -147,7 +153,7 @@ class LinearEstimatorValidator(IEstimatorValidator):
         R: np.ndarray,
         P: np.ndarray,
         x0: np.ndarray,
-        dt: float,
+        dt: tuple,
     ) -> None:
         """Validate types of input matrices and dt."""
         matrices = {"A": A, "B": B, "C": C, "Q": Q, "R": R, "P": P, "x0": x0}
@@ -163,10 +169,50 @@ class LinearEstimatorValidator(IEstimatorValidator):
                     f"stability, got {matrix.dtype}"
                 )
 
-        if not isinstance(dt, (int, float)):
-            result.add_error(f"dt must be numeric, got {type(dt)}")
-        elif dt <= 0:
-            result.add_error(f"dt must be positive, got {dt}")
+        # Validate dt - can be None (continuous), tuple, or converted to tuple
+        if dt is None:
+            # Continuous-time system, no further validation needed
+            return
+
+        # Check if dt is a tuple
+        if not isinstance(dt, tuple):
+            result.add_error(
+                f"dt must be a tuple (dt_state, dt_measurement) or None, got {type(dt)}"
+            )
+            return
+
+        # Validate tuple has exactly 2 elements
+        if len(dt) != 2:
+            result.add_error(
+                f"dt tuple must have exactly 2 elements (dt_state, dt_measurement), got {len(dt)}"
+            )
+            return
+
+        dt_state, dt_measurement = dt
+
+        # Validate dt_state
+        if dt_state is not None:
+            if not isinstance(dt_state, (int, float)):
+                result.add_error(
+                    f"dt_state must be numeric or None, got {type(dt_state)}"
+                )
+            elif dt_state < 0:
+                result.add_error(
+                    f"dt_state must be non-negative or None, got {dt_state}"
+                )
+            # dt_state == 0 is valid (treated as continuous)
+
+        # Validate dt_measurement
+        if dt_measurement is not None:
+            if not isinstance(dt_measurement, (int, float)):
+                result.add_error(
+                    f"dt_measurement must be numeric or None, got {type(dt_measurement)}"
+                )
+            elif dt_measurement < 0:
+                result.add_error(
+                    f"dt_measurement must be non-negative or None, got {dt_measurement}"
+                )
+            # dt_measurement == 0 is valid (treated as continuous)
 
     def _validate_dimensions(
         self,
@@ -281,18 +327,42 @@ class LinearEstimatorValidator(IEstimatorValidator):
                 f"Could not check observability due to numerical issues: {e}"
             )
 
-    def _check_stability(self, result: ValidationResult, A: np.ndarray) -> None:
-        """Check eigenvalues for stability."""
+    def _check_stability(
+        self, result: ValidationResult, A: np.ndarray, dt: tuple
+    ) -> None:
+        """Check eigenvalues for stability.
+
+        Args:
+            result: ValidationResult to store warnings
+            A: State transition matrix
+            dt: Time step tuple (dt_state, dt_measurement) or None for continuous
+        """
         try:
             eigenvals = np.linalg.eigvals(A)
-            max_real_part = np.max(np.real(eigenvals))
 
-            if max_real_part > 0:
-                result.add_warning(
-                    f"System matrix A may be unstable (max eigenvalue real part: "
-                    f"{max_real_part:.6f}). For discrete-time systems, check if "
-                    f"max(abs(eigenvalues)) > 1."
-                )
+            # Determine if state equation is continuous or discrete
+            is_continuous_state = dt is None or (
+                isinstance(dt, tuple) and (dt[0] is None or dt[0] == 0)
+            )
+
+            if is_continuous_state:
+                # Continuous-time stability check: all eigenvalues must have negative real parts
+                max_real_part = np.max(np.real(eigenvals))
+                if max_real_part > 0:
+                    result.add_warning(
+                        f"Continuous-time system matrix A may be unstable "
+                        f"(max eigenvalue real part: {max_real_part:.6f}). "
+                        f"For stability, all eigenvalues should have negative real parts."
+                    )
+            else:
+                # Discrete-time stability check: all eigenvalues must have magnitude < 1
+                max_magnitude = np.max(np.abs(eigenvals))
+                if max_magnitude > 1.0:
+                    result.add_warning(
+                        f"Discrete-time system matrix A may be unstable "
+                        f"(max eigenvalue magnitude: {max_magnitude:.6f}). "
+                        f"For stability, all eigenvalues should have magnitude < 1."
+                    )
         except Exception as e:
             result.add_warning(f"Could not check stability: {e}")
 
@@ -317,12 +387,34 @@ class LinearEstimatorValidator(IEstimatorValidator):
         except Exception as e:
             result.add_warning(f"Could not check conditioning: {e}")
 
-    def _check_time_step(self, result: ValidationResult, dt: float) -> None:
-        """Check for extremely large time steps."""
-        if dt > 1.0:
+    def _check_time_step(self, result: ValidationResult, dt: tuple) -> None:
+        """Check for extremely large time steps.
+
+        Args:
+            result: ValidationResult to store warnings
+            dt: Time step tuple (dt_state, dt_measurement) or None for continuous
+        """
+        if dt is None:
+            # Continuous-time system, no time step to check
+            return
+
+        if not isinstance(dt, tuple):
+            return
+
+        dt_state, dt_measurement = dt
+
+        # Check state equation time step
+        if dt_state is not None and dt_state > 1.0:
             result.add_warning(
-                f"Large time step dt={dt}s may cause numerical instability in "
-                f"discrete-time integration"
+                f"Large state equation time step dt_state={dt_state}s may cause "
+                f"numerical instability in discrete-time integration"
+            )
+
+        # Check measurement equation time step
+        if dt_measurement is not None and dt_measurement > 1.0:
+            result.add_warning(
+                f"Large measurement equation time step dt_measurement={dt_measurement}s "
+                f"may cause numerical instability"
             )
 
     def _check_system_size(self, result: ValidationResult, n_states: int) -> None:

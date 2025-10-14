@@ -11,7 +11,17 @@ Before running any code in this repository, activate the conda environment.
 conda activate continuum_robot
 ```
 
-**If conda is not in PATH, use one of these methods:**
+**If conda is not in PATH, use the direct Python path:**
+
+The most reliable method when conda is not in PATH is to use the Python interpreter directly from the conda environment:
+
+```bash
+~/miniconda3/envs/continuum_robot/bin/python -m pytest tests/
+```
+
+This bypasses conda activation entirely and directly uses the environment's Python interpreter.
+
+**Alternative activation methods (if conda commands are needed):**
 
 1. **Source conda directly from miniconda3:**
 ```bash
@@ -23,12 +33,7 @@ eval "$(~/miniconda3/bin/conda shell.bash hook)" && conda activate continuum_rob
 source ~/.bashrc && conda activate continuum_robot
 ```
 
-3. **Find and source conda initialization:**
-```bash
-source $(conda info --base)/etc/profile.d/conda.sh && conda activate continuum_robot
-```
-
-**Note:** When using Bash tool in Claude Code, conda may not be available in PATH. In that case, use method 1 (eval with miniconda3 path) for most reliable results.
+**Note:** When using Bash tool in Claude Code, conda may not be available in PATH. The direct Python path method is most reliable for running tests and Python commands.
 
 ## Commands
 
@@ -41,6 +46,7 @@ source $(conda info --base)/etc/profile.d/conda.sh && conda activate continuum_r
 ### Linting and Code Quality
 - Code is automatically linted via pre-commit hooks using `black` and `flake8`
 - Pre-commit hooks run on every commit and handle formatting
+- **IMPORTANT**: When running flake8, always use the project's `.flake8` configuration file, which specifies a max line length of 200 characters. Run flake8 without additional flags to use project settings: `flake8 <file_path>`
 
 ## Architecture Overview
 

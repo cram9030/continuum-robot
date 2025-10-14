@@ -79,9 +79,9 @@ class DiscreteKalman(AbstractEstimatorHandler):
         self.validator = validator
 
         # Validate initialization parameters
-        # Note: We pass dt=1.0 as a placeholder since DiscreteKalman doesn't use dt
+        # For discrete Kalman: both state and measurement equations are discrete (dt=1.0 as placeholder)
         validation_result = self.validator.validate_initialization(
-            A, B, C, Q, R, P, x0, dt=1.0
+            A, B, C, Q, R, P, x0, dt=(1.0, 1.0)
         )
 
         # Raise errors if validation failed

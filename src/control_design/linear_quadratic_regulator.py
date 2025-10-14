@@ -6,55 +6,103 @@ class LinearQuadraticRegulator:
     """
     Linear Quadratic Regulator (LQR) controller for continuum robot beams.
 
-    This class computes optimal control gains for linear beam systems using the
-    Linear Quadratic Regulator method. It takes pre-computed stiffness and mass
-    matrices from linear beam systems.
+    This class computes optimal control gains for linear systems using the
+    Linear Quadratic Regulator method. It takes pre-computed state-space matrices
+    A and B along with weighting matrices Q and R.
 
-    The LQR controller minimizes the cost function:
+    For continuous-time systems:
+        The LQR controller minimizes the cost function:
         J = ∫(x'Qx + u'Ru)dt
 
+    For discrete-time systems:
+        The LQR controller minimizes the cost function:
+        J = Σ(x'Qx + u'Ru)
+
     where Q is the state weighting matrix and R is the control weighting matrix.
+
+    Attributes:
+        A: State transition matrix
+        B: Input matrix
+        Q: State weighting matrix
+        R: Control weighting matrix
+        is_discrete: Whether the system is discrete-time
+        _K: Control gain matrix (computed)
+        _S: Solution to Riccati equation (computed)
+        _E: Closed-loop eigenvalues (computed)
     """
 
     def __init__(
-        self, K_beam: np.ndarray, M_beam: np.ndarray, Q: np.ndarray, R: np.ndarray
+        self,
+        A: np.ndarray = None,
+        B: np.ndarray = None,
+        Q: np.ndarray = None,
+        R: np.ndarray = None,
+        sys: ct.StateSpace = None,
     ):
         """
         Initialize the Linear Quadratic Regulator.
 
+        Can be initialized either with explicit matrices (A, B, Q, R) or with
+        a control.StateSpace system object.
+
         Args:
-            K_beam: Stiffness matrix from linear beam system
-            M_beam: Mass matrix from linear beam system
-            Q: State weighting matrix (positive semidefinite)
-            R: Control weighting matrix (positive definite)
+            A: State matrix for the linear system (n_states x n_states). Required if sys is None.
+            B: Input matrix for the linear system (n_states x n_inputs). Required if sys is None.
+            Q: State weighting matrix (positive semidefinite). Required if sys is None.
+            R: Control weighting matrix (positive definite). Required if sys is None.
+            sys: Control system StateSpace object. If provided, A and B are extracted from it.
 
         Raises:
             ValueError: If matrix dimensions are invalid or matrices have wrong properties
+            ValueError: If neither (A, B, Q, R) nor sys is provided
         """
-        self._validate_beam_matrices(K_beam, M_beam)
-        self._validate_weighting_matrices(Q, R)
+        # Extract system matrices
+        if sys is not None:
+            # Extract from StateSpace system
+            if not isinstance(sys, ct.StateSpace):
+                raise ValueError("sys must be a control.StateSpace object")
 
-        self.K_beam = K_beam
-        self.M_beam = M_beam
-        self.Q = Q
-        self.R = R
-        self._A = None
-        self._B = None
+            self.A = np.array(sys.A)
+            self.B = np.array(sys.B)
+            self.is_discrete = sys.dt is not None and sys.dt > 0
+
+            # Still need Q and R to be provided
+            if Q is None or R is None:
+                raise ValueError(
+                    "Q and R matrices must be provided even when using sys"
+                )
+            self.Q = Q
+            self.R = R
+        else:
+            # All matrices must be provided
+            if A is None or B is None or Q is None or R is None:
+                raise ValueError("Either sys or all of (A, B, Q, R) must be provided")
+
+            self._validate_system_matrices(A, B)
+            self.A = A
+            self.B = B
+            self.Q = Q
+            self.R = R
+            self.is_discrete = False  # Default to continuous unless specified
+
+        # Validate weighting matrices
+        self._validate_weighting_matrices(self.Q, self.R)
+
         self._K = None
         self._S = None
         self._E = None
 
-    def _validate_beam_matrices(self, K_beam: np.ndarray, M_beam: np.ndarray) -> None:
-        """Validate beam stiffness and mass matrices."""
-        if K_beam.ndim != 2 or K_beam.shape[0] != K_beam.shape[1]:
-            raise ValueError("Stiffness matrix must be square")
+    def _validate_system_matrices(self, A: np.ndarray, B: np.ndarray) -> None:
+        """Validate state-space matrices A and B."""
+        if A.ndim != 2 or A.shape[0] != A.shape[1]:
+            raise ValueError("A matrix must be square")
 
-        if M_beam.ndim != 2 or M_beam.shape[0] != M_beam.shape[1]:
-            raise ValueError("Mass matrix must be square")
+        if B.ndim != 2:
+            raise ValueError("B matrix must be 2-dimensional")
 
-        if K_beam.shape != M_beam.shape:
+        if A.shape[0] != B.shape[0]:
             raise ValueError(
-                "Stiffness and mass matrices must have the same dimensions"
+                "A and B matrices must have compatible dimensions (A.shape[0] == B.shape[0])"
             )
 
     def _validate_weighting_matrices(self, Q: np.ndarray, R: np.ndarray) -> None:
@@ -83,118 +131,125 @@ class LinearQuadraticRegulator:
 
     def get_A(self) -> np.ndarray:
         """
-        Compute the A matrix for the linear system dx/dt = Ax + Bu.
-
-        For a structural dynamics system: M*q̈ + K*q = u
-        In state space form with x = [q, q̇]:
-        dx/dt = [0  I ] x + [0    ] u
-                [-K -C]     [M^-1]
+        Get the A matrix for the linear system dx/dt = Ax + Bu.
 
         Returns:
             A matrix for the linearized system
         """
-        if self._A is not None:
-            return self._A
-
-        # Use the provided beam matrices
-        M = self.M_beam
-        K = self.K_beam
-
-        n = M.shape[0]  # Number of position DOFs
-
-        # Create A matrix for undamped system
-        # A = [0   I ]
-        #     [-M^-1*K  0]
-        self._A = np.zeros((2 * n, 2 * n))
-        self._A[:n, n:] = np.eye(n)  # Upper right: I
-
-        try:
-            M_inv = np.linalg.inv(M)
-            self._A[n:, :n] = -M_inv @ K  # Lower left: -M^-1*K
-        except np.linalg.LinAlgError:
-            raise ValueError("Mass matrix is singular and cannot be inverted")
-
-        return self._A
+        return self.A
 
     def get_B(self) -> np.ndarray:
         """
-        Compute the B matrix for the linear system dx/dt = Ax + Bu.
-
-        For a structural system, forces are applied directly to positions:
-        B = [0    ]
-            [M^-1 ]
+        Get the B matrix for the linear system dx/dt = Ax + Bu.
 
         Returns:
             B matrix for the linearized system
         """
-        if self._B is not None:
-            return self._B
+        return self.B
 
-        # Use the provided mass matrix
-        M = self.M_beam
-        n = M.shape[0]  # Number of position DOFs
-
-        # Create B matrix - assume full actuation for now
-        self._B = np.zeros((2 * n, n))
-
-        try:
-            M_inv = np.linalg.inv(M)
-            self._B[n:, :] = M_inv  # Lower half: M^-1
-        except np.linalg.LinAlgError:
-            raise ValueError("Mass matrix is singular and cannot be inverted")
-
-        return self._B
-
-    def compute_gain_matrix(self) -> np.ndarray:
+    def compute_gain_matrix(self) -> tuple:
         """
-        Compute the optimal LQR gain matrix K.
+        Compute the optimal LQR gain matrix K and solution S.
 
         Solves the algebraic Riccati equation to find the optimal gain matrix K
         such that u = -K*x minimizes the quadratic cost function.
 
         Returns:
-            Optimal gain matrix K
+            Tuple[np.ndarray, np.ndarray]: (K, S)
+                K: Control gain matrix (n_inputs x n_states)
+                S: Solution to Riccati equation (n_states x n_states)
 
         Raises:
             ValueError: If the LQR problem cannot be solved
+            ValueError: If the solution results in an unstable closed-loop system
         """
-        if self._K is not None:
-            return self._K
-
-        A = self.get_A()
-        B = self.get_B()
+        if self._K is not None and self._S is not None:
+            return self._K, self._S
 
         # Validate dimensions
-        if self.Q.shape[0] != A.shape[0]:
+        if self.Q.shape[0] != self.A.shape[0]:
             raise ValueError(
-                f"Q matrix dimension {self.Q.shape[0]} must match state dimension {A.shape[0]}"
+                f"Q matrix dimension {self.Q.shape[0]} must match state dimension {self.A.shape[0]}"
             )
 
-        if self.R.shape[0] != B.shape[1]:
+        if self.R.shape[0] != self.B.shape[1]:
             raise ValueError(
-                f"R matrix dimension {self.R.shape[0]} must match input dimension {B.shape[1]}"
+                f"R matrix dimension {self.R.shape[0]} must match input dimension {self.B.shape[1]}"
             )
 
         try:
-            # Solve LQR problem
-            self._K, self._S, self._E = ct.lqr(A, B, self.Q, self.R)
+            if self.is_discrete:
+                # Discrete-time LQR: dlqr(A, B, Q, R)
+                self._K, self._S, self._E = ct.dlqr(self.A, self.B, self.Q, self.R)
+            else:
+                # Continuous-time LQR: lqr(A, B, Q, R)
+                self._K, self._S, self._E = ct.lqr(self.A, self.B, self.Q, self.R)
         except Exception as e:
             raise ValueError(f"Failed to solve LQR problem: {e}")
 
-        # Validate that the closed-loop system is stable
-        A_cl = A - B @ self._K
-        eigenvals = np.linalg.eigvals(A_cl)
+        # Check stability of the closed-loop system using eigenvalues from control library
+        if self.is_discrete:
+            # Discrete-time: eigenvalues must be inside unit circle
+            max_magnitude = np.max(np.abs(self._E))
+            if max_magnitude >= 1.0:
+                raise ValueError(
+                    f"LQR solution results in unstable closed-loop system "
+                    f"(max eigenvalue magnitude: {max_magnitude:.6f})"
+                )
+        else:
+            # Continuous-time: eigenvalues must have negative real parts
+            max_real_part = np.max(np.real(self._E))
+            if max_real_part >= 0:
+                raise ValueError(
+                    f"LQR solution results in unstable closed-loop system "
+                    f"(max eigenvalue real part: {max_real_part:.6f})"
+                )
 
-        if np.any(np.real(eigenvals) >= 0):
-            raise ValueError("LQR solution results in unstable closed-loop system")
-
-        return self._K
+        return self._K, self._S
 
     def get_K(self) -> np.ndarray:
         """
-        Get the computed gain matrix K.
+        Get the computed control gain matrix K.
 
         Returns:
-            Gain matrix K if already computed, otherwise computes it first
+            Control gain matrix K if already computed, otherwise computes it first
         """
-        return self.compute_gain_matrix()
+        if self._K is None:
+            self.compute_gain_matrix()
+        return self._K
+
+    def get_S(self) -> np.ndarray:
+        """
+        Get the computed solution to Riccati equation S.
+
+        Returns:
+            Solution matrix S if already computed, otherwise computes it first
+        """
+        if self._S is None:
+            self.compute_gain_matrix()
+        return self._S
+
+    def is_discrete_time(self) -> bool:
+        """
+        Check if the system is discrete-time.
+
+        Returns:
+            True if discrete-time, False if continuous-time
+        """
+        return self.is_discrete
+
+    def set_discrete_time(self, is_discrete: bool):
+        """
+        Set whether the system is discrete-time or continuous-time.
+
+        This should be called before compute_gain_matrix() if you need to
+        override the default (continuous) or the value inferred from sys.
+
+        Args:
+            is_discrete: True for discrete-time, False for continuous-time
+        """
+        if self._K is not None:
+            raise ValueError(
+                "Cannot change discrete/continuous mode after gain has been computed"
+            )
+        self.is_discrete = is_discrete

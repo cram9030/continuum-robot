@@ -1,5 +1,6 @@
 import numpy as np
 import warnings
+from scipy.integrate import solve_ivp
 from .estimator_abstractions import AbstractEstimatorHandler
 from .validator_abstractions import IEstimatorValidator
 from .linear_estimator_validator import LinearEstimatorValidator
@@ -11,16 +12,23 @@ class HybridContinuousDiscreteKalman(AbstractEstimatorHandler):
 
     This class implements a hybrid continuous-discrete Kalman Filter where the system
     dynamics are continuous but measurements arrive at discrete time intervals. The filter
-    performs prediction continuously and updates only when new measurements are available
-    based on the time elapsed since the last measurement.
+    performs prediction continuously using solve_ivp integration and updates only when
+    new measurements are available based on the time elapsed since the last measurement.
 
     The filter operates in two main steps:
-        1. Prediction: Continuously estimate state evolution based on system dynamics
-        2. Update: Discretely refine estimates when new measurements arrive (dt elapsed)
+        1. Prediction: Continuously integrate state evolution x̂_{i|i-1} and covariance P_{i|i-1}
+        2. Update: Discretely refine estimates to x̂_{k|k} and P_{k|k} when measurements arrive
+
+    Notation:
+        x̂_{i|i-1}: Predicted state at time i given information up to previous predict step
+        P_{i|i-1}: Predicted error covariance at time i given information up to previous predict step
+        x̂_{k|k}: Updated state at measurement time k given measurement at time k
+        P_{k|k}: Updated error covariance at measurement time k given measurement at time k
 
     Key Features:
     - Time-aware measurement handling: only updates when dt time has elapsed
     - Returns predicted states for intermediate time queries
+    - Uses solve_ivp for accurate continuous-time integration
     - Thread-safe for real-time robotics applications
     - Uses Strategy Pattern for validation (delegated to validator)
 
@@ -30,10 +38,14 @@ class HybridContinuousDiscreteKalman(AbstractEstimatorHandler):
         C: Observation matrix
         Q: Process noise covariance
         R: Measurement noise covariance
-        P: Estimate error covariance
-        x_est: Current state estimate
+        P_est: Estimate error covariance P_{k|k} after measurement update
+        x_est: State estimate x̂_{k|k} after measurement update
+        P_pred: Predicted error covariance P_{i|i-1}
+        x_pred: Predicted state x̂_{i|i-1}
         dt: Discrete measurement interval
         last_update_time: Time of last measurement update
+        last_pred_time: Time of last prediction
+        integrator_options: Dictionary of solve_ivp solver options
         validator: Validation strategy for initialization and runtime checks
     """
 
@@ -48,6 +60,7 @@ class HybridContinuousDiscreteKalman(AbstractEstimatorHandler):
         x0: np.ndarray,
         dt: float = 0.01,
         validator: IEstimatorValidator = None,
+        integrator_options: dict | None = None,
     ):
         """
         Initialize the Kalman Filter with system matrices and initial conditions.
@@ -58,10 +71,13 @@ class HybridContinuousDiscreteKalman(AbstractEstimatorHandler):
             C: Observation matrix (n_measurements x n_states)
             Q: Process noise covariance (n_states x n_states)
             R: Measurement noise covariance (n_measurements x n_measurements)
-            P: Initial estimate error covariance (n_states x n_states)
-            x0: Initial state estimate (n_states,)
-            dt: Discrete time step for integration (must be positive)
+            P: Initial estimate error covariance P_{0|0} (n_states x n_states)
+            x0: Initial state estimate x̂_{0|0} (n_states,)
+            dt: Discrete time step for measurement updates (must be positive)
             validator: Validation strategy (default: LinearEstimatorValidator)
+            integrator_options: Optional dictionary of solver options for solve_ivp
+                               (e.g., {'method': 'RK45', 'rtol': 1e-6, 'atol': 1e-9})
+                               If None, defaults to RK45 with standard tolerances
 
         Raises:
             ValueError: If validation fails with errors
@@ -73,8 +89,10 @@ class HybridContinuousDiscreteKalman(AbstractEstimatorHandler):
         self.validator = validator
 
         # Validate initialization parameters
+        # For hybrid continuous-discrete: state equation is continuous (None),
+        # measurement is discrete (dt)
         validation_result = self.validator.validate_initialization(
-            A, B, C, Q, R, P, x0, dt
+            A, B, C, Q, R, P, x0, dt=(None, dt)
         )
 
         # Raise errors if validation failed
@@ -92,54 +110,114 @@ class HybridContinuousDiscreteKalman(AbstractEstimatorHandler):
         self.C = C.copy()
         self.Q = Q.copy()
         self.R = R.copy()
-        self.P = P.copy()
-        self.x_est = x0.copy()
+        self.P_est = P.copy()  # P_{k|k} - estimate error covariance after update
+        self.x_est = x0.copy()  # x̂_{k|k} - state estimate after update
         self.dt = float(dt)
         self.last_update_time = 0.0  # Initialize to 0 for first call
         self._first_call = True  # Track if this is the first estimate call
+
+        # Initialize prediction states
+        self.x_pred = x0.copy()  # x̂_{i|i-1} - predicted state
+        self.P_pred = P.copy()  # P_{i|i-1} - predicted error covariance
+        self.last_pred_time = 0.0  # Time of last prediction
+
+        # Set integrator options with defaults
+        if integrator_options is None:
+            self.integrator_options = {"method": "RK45", "rtol": 1e-6, "atol": 1e-9}
+        else:
+            # Ensure method is specified, default to RK45 if not
+            self.integrator_options = integrator_options.copy()
+            if "method" not in self.integrator_options:
+                self.integrator_options["method"] = "RK45"
+            if "rtol" not in self.integrator_options:
+                self.integrator_options["rtol"] = 1e-6
+            if "atol" not in self.integrator_options:
+                self.integrator_options["atol"] = 1e-9
 
         # Store dimensions for runtime validation
         self.n_states = A.shape[0]
         self.n_measurements = C.shape[0]
         self.n_inputs = B.shape[1] if B.ndim > 1 else 1
 
-    @staticmethod
-    def _is_positive_semidefinite(matrix):
-        """Check if matrix is positive semidefinite."""
-        eigenvals = np.linalg.eigvals(matrix)
-        return np.all(eigenvals >= -1e-8)  # Small tolerance for numerical errors
-
-    def _predict(self, u: np.ndarray) -> tuple:
+    def _predict(self, u: np.ndarray, t: float) -> None:
         """
-        Predict the next state and estimate error covariance.
+        Predict the state and estimate error covariance to time t using solve_ivp.
+
+        This method integrates the continuous-time dynamics from the most recent time
+        (either last_pred_time or last_update_time) to the current time t.
+        Updates self.x_pred and self.P_pred.
+
+        Dynamics:
+            dx̂/dt = A @ x̂ + B @ u
+            dP/dt = A @ P + P @ A^T + Q
 
         Args:
-            u: Current input vector
-
-        Returns:
-            Tuple[np.ndarray, np.ndarray]: Predicted state derivative and covariance derivative
+            u: Current input vector (assumed constant over integration interval)
+            t: Current time to predict to
         """
-        xdot_pred = self.A @ self.x_est + self.B @ u
-        Pdot_pred = self.A @ self.P + self.P @ self.A.T + self.Q
-        return xdot_pred, Pdot_pred
+        # Determine which state and covariance to use as initial conditions
+        # Use most recent of prediction or update
+        if self.last_pred_time >= self.last_update_time:
+            x_init = self.x_pred
+            P_init = self.P_pred
+            t_start = self.last_pred_time
+        else:
+            x_init = self.x_est
+            P_init = self.P_est
+            t_start = self.last_update_time
 
-    def _update(self, y: np.ndarray, x_pred: np.ndarray, P_pred: np.ndarray) -> None:
+        # If we're already at the current time, no need to integrate
+        if abs(t - t_start) < 1e-10:
+            return
+
+        # Create combined state vector [x, P.flatten()]
+        n = self.n_states
+        combined_init = np.concatenate([x_init, P_init.flatten()])
+
+        # Define the combined dynamics function
+        def combined_dynamics(t_val, combined_state):
+            x = combined_state[:n]
+            P_flat = combined_state[n:]
+            P = P_flat.reshape((n, n))
+
+            # State dynamics: dx/dt = A @ x + B @ u
+            xdot = self.A @ x + self.B @ u
+
+            # Covariance dynamics: dP/dt = A @ P + P @ A^T + Q
+            Pdot = self.A @ P + P @ self.A.T + self.Q
+            Pdot_flat = Pdot.flatten()
+
+            return np.concatenate([xdot, Pdot_flat])
+
+        # Integrate using solve_ivp
+        sol = solve_ivp(
+            combined_dynamics, [t_start, t], combined_init, **self.integrator_options
+        )
+
+        # Extract final state and covariance
+        combined_final = sol.y[:, -1]
+        self.x_pred = combined_final[:n]
+        self.P_pred = combined_final[n:].reshape((n, n))
+        self.last_pred_time = t
+
+    def _update(self, y: np.ndarray) -> None:
         """
         Update the state estimate and estimate error covariance using the new measurement.
+
+        This performs the discrete measurement update step, converting predicted estimates
+        x̂_{k|i-1} and P_{k|i-1} to updated estimates x̂_{k|k} and P_{k|k}.
 
         Uses Joseph form for numerical stability in covariance update.
 
         Args:
             y: Current measurement vector (n_measurements,)
-            x_pred: Predicted state vector (n_states,)
-            P_pred: Predicted estimate error covariance (n_states, n_states)
         """
-        # Compute innovation
-        y_pred = self.C @ x_pred
+        # Compute innovation using predicted state
+        y_pred = self.C @ self.x_pred
         innovation = y - y_pred
 
         # Compute innovation covariance
-        S = self.C @ P_pred @ self.C.T + self.R
+        S = self.C @ self.P_pred @ self.C.T + self.R
 
         # Check for singular innovation covariance
         if np.linalg.det(S) < 1e-12:
@@ -148,36 +226,38 @@ class HybridContinuousDiscreteKalman(AbstractEstimatorHandler):
             )
 
         # Compute Kalman gain
-        K = P_pred @ self.C.T @ np.linalg.inv(S)
+        K = self.P_pred @ self.C.T @ np.linalg.inv(S)
 
-        # Update state estimate
-        self.x_est = x_pred + K @ innovation
+        # Update state estimate: x̂_{k|k} = x̂_{k|i-1} + K @ (y - ŷ)
+        self.x_est = self.x_pred + K @ innovation
 
         # Joseph form covariance update for numerical stability
+        # P_{k|k} = (I - K @ C) @ P_{k|i-1}
         I_KC = np.eye(self.n_states) - K @ self.C
-        self.P = I_KC @ P_pred
+        self.P_est = I_KC @ self.P_pred
 
-        # Ensure P remains positive semidefinite
-        if not self._is_positive_semidefinite(self.P):
+        # Ensure P_est remains positive semidefinite
+        if not LinearEstimatorValidator._is_positive_semidefinite(self.P_est):
             warnings.warn(
                 "Estimate covariance became non-positive semidefinite, applying regularization"
             )
-            eigenvals, eigenvecs = np.linalg.eigh(self.P)
+            eigenvals, eigenvecs = np.linalg.eigh(self.P_est)
             eigenvals = np.maximum(eigenvals, 1e-12)  # Regularize
-            self.P = eigenvecs @ np.diag(eigenvals) @ eigenvecs.T
+            self.P_est = eigenvecs @ np.diag(eigenvals) @ eigenvecs.T
 
     def estimate_states(self, y: np.ndarray, u: np.ndarray, t: float) -> np.ndarray:
         """
         Estimate current states given observations, input, and time.
 
-        This method implements hybrid continuous-discrete estimation using matrix exponentials
-        for accurate continuous-time propagation:
-        - If t - last_update_time < dt: performs prediction only and returns predicted state
-        - If t - last_update_time >= dt: performs prediction and measurement update, updates last_update_time
+        This method implements hybrid continuous-discrete estimation using solve_ivp
+        for continuous-time integration:
+        - Always performs prediction to time t, updating x̂_{i|i-1} and P_{i|i-1}
+        - If t - last_update_time < dt: returns predicted state x̂_{i|i-1} only
+        - If t - last_update_time >= dt: performs measurement update to get x̂_{k|k}, updates last_update_time
 
-        The prediction uses:
-            x_pred = expm(A * dt) @ x + integral(expm(A * tau) @ B @ u, 0, dt)
-            P_pred = expm(A * dt) @ P @ expm(A * dt).T + Q_discrete
+        The prediction integrates:
+            dx̂/dt = A @ x̂ + B @ u
+            dP/dt = A @ P + P @ A^T + Q
 
         Args:
             y: Current measurement vector (n_measurements,) - used only when dt has elapsed
@@ -186,13 +266,12 @@ class HybridContinuousDiscreteKalman(AbstractEstimatorHandler):
 
         Returns:
             np.ndarray: Current state vector estimation [positions, velocities] (n_states,)
-                       - Predicted state if measurement update is not due
-                       - Updated state if measurement update is performed
+                       - Predicted state x̂_{i|i-1} if measurement update is not due
+                       - Updated state x̂_{k|k} if measurement update is performed
 
         Raises:
             ValueError: If runtime validation fails
         """
-        from scipy.linalg import expm
 
         # Validate runtime state
         validation_result = self.validator.validate_runtime_state(
@@ -212,42 +291,20 @@ class HybridContinuousDiscreteKalman(AbstractEstimatorHandler):
         if not isinstance(t, (int, float)):
             raise TypeError(f"Time t must be numeric, got {type(t)}")
 
+        # Always perform prediction to current time
+        self._predict(u, t)
+
         # Calculate time since last update
         time_since_update = t - self.last_update_time
-
-        # Compute discrete-time state transition matrix using matrix exponential
-        A_discrete = expm(self.A * time_since_update)
-
-        # Compute discrete-time control input matrix
-        # B_discrete = integral(expm(A * tau) @ B, 0, dt)
-        # For small dt, approximation: B_discrete ≈ B * dt
-        # For better accuracy, use: inv(A) @ (expm(A*dt) - I) @ B
-        if np.linalg.matrix_rank(self.A) == self.n_states:
-            # A is full rank, use exact formula
-            B_discrete = np.linalg.solve(
-                self.A, (A_discrete - np.eye(self.n_states)) @ self.B
-            )
-        else:
-            # A is singular or near-singular, use first-order approximation
-            B_discrete = self.B * time_since_update
-
-        # Perform prediction step using discrete-time transition
-        x_pred = A_discrete @ self.x_est + B_discrete @ u
-
-        # Propagate covariance
-        # P_pred = A_discrete @ P @ A_discrete.T + Q_discrete
-        # For continuous-time Q, discretize as Q_discrete ≈ Q * dt
-        Q_discrete = self.Q * time_since_update
-        P_pred = A_discrete @ self.P @ A_discrete.T + Q_discrete
 
         # Decide whether to perform measurement update
         # Update if: (1) first call, or (2) dt time has elapsed since last update
         if self._first_call or time_since_update >= self.dt:
             # Time for measurement update
-            self._update(y, x_pred, P_pred)
+            self._update(y)
             self.last_update_time = t  # Update to current time
             self._first_call = False  # No longer the first call
-            return self.x_est.copy()  # Return updated state
+            return self.x_est.copy()  # Return updated state x̂_{k|k}
         else:
             # Return predicted state without update
-            return x_pred.copy()  # Return predicted state only
+            return self.x_pred.copy()  # Return predicted state x̂_{i|i-1}
